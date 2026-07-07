@@ -12,10 +12,11 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.router import router as api_router
+from app.api.router import router as api_router, init_pipeline
 from app.api.schemas import HealthResponse
 from app.config import get_settings
 from app.logging import get_logger, setup_logging
+from app.router.pipeline import RoutingPipeline
 
 
 @asynccontextmanager
@@ -30,6 +31,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         models=list(settings.allowed_models.keys()),
         log_level=settings.log_level,
     )
+
+    # Initialise the routing pipeline and inject into the API router.
+    pipeline = RoutingPipeline()
+    init_pipeline(pipeline)
+    logger.info("pipeline_initialised")
+
     yield
     logger.info("optiroute_shutdown")
 
