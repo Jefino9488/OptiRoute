@@ -2,7 +2,9 @@
 name = "optiroute"
 version = "0.1.0"
 description = "Adaptive Capability-Based Hybrid AI Routing Framework"
+readme = "README.md"
 requires-python = ">=3.12"
+license = {text = "MIT"}
 dependencies = [
     "fastapi>=0.139.0",
     "uvicorn>=0.50.2",
@@ -15,3 +17,8 @@ dependencies = [
     "pytest-asyncio>=1.0.0",
     "pydantic>=2.13.4",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
+
