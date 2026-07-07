@@ -1,0 +1,12 @@
+[
+  {"prompt": "Translate 'Hello, how are you?' to French.", "expected_output": "Bonjour, comment allez-vous?", "category": "translation", "difficulty": "easy"},
+  {"prompt": "Translate 'The weather is beautiful today' to Spanish.", "expected_output": "El clima está hermoso hoy", "category": "translation", "difficulty": "easy"},
+  {"prompt": "Translate 'I love programming' to German.", "expected_output": "Ich liebe Programmieren", "category": "translation", "difficulty": "easy"},
+  {"prompt": "Translate 'Where is the nearest hospital?' to Japanese.", "expected_output": "最寄りの病院はどこですか", "category": "translation", "difficulty": "medium"},
+  {"prompt": "Translate 'Knowledge is power' to Latin.", "expected_output": "Scientia potentia est", "category": "translation", "difficulty": "medium"},
+  {"prompt": "Translate 'Good morning, I would like a coffee please' to Italian.", "expected_output": "Buongiorno, vorrei un caffè per favore", "category": "translation", "difficulty": "easy"},
+  {"prompt": "Translate 'The quick brown fox jumps over the lazy dog' to Portuguese.", "expected_output": "A rápida raposa marrom pula sobre o cão preguiçoso", "category": "translation", "difficulty": "medium"},
+  {"prompt": "Translate 'Thank you very much for your help' to Korean.", "expected_output": "도움을 주셔서 대단히 감사합니다", "category": "translation", "difficulty": "medium"},
+  {"prompt": "Translate 'Life is short, learn something new every day' to Chinese.", "expected_output": "生命短暂，每天学习新事物", "category": "translation", "difficulty": "medium"},
+  {"prompt": "Translate 'The meeting will start at 3 PM' to Russian.", "expected_output": "Встреча начнётся в 15:00", "category": "translation", "difficulty": "medium"}
+]

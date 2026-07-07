@@ -1,0 +1,17 @@
+[
+  {"prompt": "Compare the advantages and disadvantages of microservices vs monolithic architecture.", "expected_output": "microservices scalability independent deployment complexity monolithic simpler deployment", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "If all roses are flowers and some flowers fade quickly, can we conclude that some roses fade quickly?", "expected_output": "No, we cannot conclude that. The flowers that fade quickly may not include roses.", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "Explain why the sky appears blue.", "expected_output": "Rayleigh scattering shorter blue wavelengths scattered more atmosphere", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "A bat and ball cost $1.10 total. The bat costs $1.00 more than the ball. How much does the ball cost?", "expected_output": "0.05", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "What are the trade-offs between using a relational database vs a NoSQL database?", "expected_output": "relational ACID consistency schema NoSQL flexible scalable eventually consistent", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets?", "expected_output": "5 minutes", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "Explain the concept of technical debt and how it impacts software development.", "expected_output": "shortcuts short-term speed long-term maintenance cost refactoring", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "Why is the traveling salesman problem considered computationally hard?", "expected_output": "NP-hard combinatorial explosion factorial number of routes", "category": "reasoning", "difficulty": "hard"},
+  {"prompt": "Explain the difference between concurrency and parallelism.", "expected_output": "concurrency dealing with multiple tasks parallelism executing simultaneously", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "What would happen to the global economy if all fossil fuels suddenly disappeared?", "expected_output": "transportation collapse energy crisis food production disruption", "category": "reasoning", "difficulty": "hard"},
+  {"prompt": "Analyze the pros and cons of remote work for software engineers.", "expected_output": "flexibility no commute isolation communication challenges work-life balance", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "Why is it harder to compress data that has already been compressed?", "expected_output": "redundancy removed entropy high fewer patterns to exploit", "category": "reasoning", "difficulty": "hard"},
+  {"prompt": "Explain why sorting algorithms have a theoretical lower bound of O(n log n) for comparison-based sorting.", "expected_output": "decision tree model n! possible permutations log(n!) = O(n log n)", "category": "reasoning", "difficulty": "hard"},
+  {"prompt": "What are the ethical implications of using AI for facial recognition in public spaces?", "expected_output": "privacy surveillance bias accuracy consent civil liberties", "category": "reasoning", "difficulty": "hard"},
+  {"prompt": "If you could only use one data structure for the rest of your career, which would you choose and why?", "expected_output": "hash map dictionary versatile O(1) lookup flexible", "category": "reasoning", "difficulty": "medium"}
+]

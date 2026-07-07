@@ -1,0 +1,17 @@
+[
+  {"prompt": "What is the capital of France?", "expected_output": "Paris", "category": "general_qa", "difficulty": "easy"},
+  {"prompt": "Who wrote Romeo and Juliet?", "expected_output": "William Shakespeare", "category": "general_qa", "difficulty": "easy"},
+  {"prompt": "What is photosynthesis?", "expected_output": "process plants use to convert sunlight into energy", "category": "general_qa", "difficulty": "easy"},
+  {"prompt": "What is the speed of light in meters per second?", "expected_output": "299792458", "category": "general_qa", "difficulty": "medium"},
+  {"prompt": "Name three programming paradigms.", "expected_output": "object-oriented procedural functional", "category": "general_qa", "difficulty": "medium"},
+  {"prompt": "What is the difference between TCP and UDP?", "expected_output": "TCP is connection-oriented reliable, UDP is connectionless faster", "category": "general_qa", "difficulty": "medium"},
+  {"prompt": "Explain what a hash table is.", "expected_output": "data structure key-value pairs hash function constant time lookup", "category": "general_qa", "difficulty": "medium"},
+  {"prompt": "What are the SOLID principles in software engineering?", "expected_output": "Single Responsibility Open-Closed Liskov Substitution Interface Segregation Dependency Inversion", "category": "general_qa", "difficulty": "hard"},
+  {"prompt": "What is the time complexity of binary search?", "expected_output": "O(log n)", "category": "general_qa", "difficulty": "easy"},
+  {"prompt": "What planet is known as the Red Planet?", "expected_output": "Mars", "category": "general_qa", "difficulty": "easy"},
+  {"prompt": "What is machine learning?", "expected_output": "subset of AI algorithms learn from data patterns", "category": "general_qa", "difficulty": "medium"},
+  {"prompt": "What is the Pythagorean theorem?", "expected_output": "a squared plus b squared equals c squared", "category": "general_qa", "difficulty": "easy"},
+  {"prompt": "List the layers of the OSI model.", "expected_output": "Physical Data Link Network Transport Session Presentation Application", "category": "general_qa", "difficulty": "medium"},
+  {"prompt": "What is recursion in programming?", "expected_output": "function calls itself base case", "category": "general_qa", "difficulty": "easy"},
+  {"prompt": "What causes seasons on Earth?", "expected_output": "tilt of Earth's axis as it orbits the Sun", "category": "general_qa", "difficulty": "medium"}
+]

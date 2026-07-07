@@ -1,0 +1,12 @@
+[
+  {"prompt": "Write a short poem about the ocean.", "expected_output": "", "category": "creative", "difficulty": "easy"},
+  {"prompt": "Write a 100-word story about a robot discovering emotions.", "expected_output": "", "category": "creative", "difficulty": "medium"},
+  {"prompt": "Compose a haiku about autumn leaves.", "expected_output": "", "category": "creative", "difficulty": "easy"},
+  {"prompt": "Write a dialogue between a cat and a dog discussing their differences.", "expected_output": "", "category": "creative", "difficulty": "medium"},
+  {"prompt": "Create a short fairy tale about a brave mouse.", "expected_output": "", "category": "creative", "difficulty": "medium"},
+  {"prompt": "Write a limerick about a programmer.", "expected_output": "", "category": "creative", "difficulty": "easy"},
+  {"prompt": "Imagine you are an astronaut seeing Earth from space for the first time. Describe what you see and feel.", "expected_output": "", "category": "creative", "difficulty": "medium"},
+  {"prompt": "Write a persuasive paragraph arguing why everyone should learn to code.", "expected_output": "", "category": "creative", "difficulty": "medium"},
+  {"prompt": "Create a product description for a magical umbrella that controls the weather.", "expected_output": "", "category": "creative", "difficulty": "medium"},
+  {"prompt": "Write a brief monologue from the perspective of the last tree on Earth.", "expected_output": "", "category": "creative", "difficulty": "hard"}
+]

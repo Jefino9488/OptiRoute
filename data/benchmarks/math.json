@@ -1,0 +1,22 @@
+[
+  {"prompt": "What is 15 * 23?", "expected_output": "345", "category": "math", "difficulty": "easy"},
+  {"prompt": "Calculate 127 + 389", "expected_output": "516", "category": "math", "difficulty": "easy"},
+  {"prompt": "What is 1024 / 16?", "expected_output": "64", "category": "math", "difficulty": "easy"},
+  {"prompt": "Solve: 2^10", "expected_output": "1024", "category": "math", "difficulty": "easy"},
+  {"prompt": "What is 17% of 400?", "expected_output": "68", "category": "math", "difficulty": "easy"},
+  {"prompt": "Calculate the factorial of 6", "expected_output": "720", "category": "math", "difficulty": "medium"},
+  {"prompt": "What is the square root of 144?", "expected_output": "12", "category": "math", "difficulty": "easy"},
+  {"prompt": "If a train travels at 60 mph for 2.5 hours, how far does it travel?", "expected_output": "150", "category": "math", "difficulty": "medium"},
+  {"prompt": "Solve for x: 3x + 7 = 22", "expected_output": "5", "category": "math", "difficulty": "medium"},
+  {"prompt": "What is the sum of the first 10 positive integers?", "expected_output": "55", "category": "math", "difficulty": "medium"},
+  {"prompt": "A rectangle has length 12 and width 5. What is its area?", "expected_output": "60", "category": "math", "difficulty": "easy"},
+  {"prompt": "What is 3.14 * 10^2?", "expected_output": "314", "category": "math", "difficulty": "easy"},
+  {"prompt": "If you have 3 red balls and 5 blue balls, what is the probability of drawing a red ball?", "expected_output": "0.375", "category": "math", "difficulty": "medium"},
+  {"prompt": "Calculate the GCD of 48 and 18", "expected_output": "6", "category": "math", "difficulty": "medium"},
+  {"prompt": "What is the value of 5! / 3!?", "expected_output": "20", "category": "math", "difficulty": "medium"},
+  {"prompt": "A car depreciates 15% per year. If it costs $20000, what is its value after 1 year?", "expected_output": "17000", "category": "math", "difficulty": "medium"},
+  {"prompt": "What is the area of a circle with radius 7? Use pi = 3.14159", "expected_output": "153.938", "category": "math", "difficulty": "medium"},
+  {"prompt": "Solve the quadratic equation x^2 - 5x + 6 = 0", "expected_output": "2 and 3", "category": "math", "difficulty": "hard"},
+  {"prompt": "What is the 10th term of the arithmetic sequence starting at 3 with common difference 4?", "expected_output": "39", "category": "math", "difficulty": "medium"},
+  {"prompt": "Convert 72 degrees Fahrenheit to Celsius", "expected_output": "22.22", "category": "math", "difficulty": "easy"}
+]

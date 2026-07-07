@@ -1,0 +1,206 @@
+"""Capability matrix generator — builds capability_matrix.json from benchmark results.
+
+Consumes evaluator output and produces the JSON file that drives all
+routing decisions.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import structlog
+
+from app.benchmark.evaluator import BenchmarkEvaluator
+from app.benchmark.runner import BenchmarkResult
+from app.router.capability_matrix import CapabilityMatrix, TASK_DIMENSIONS
+
+logger = structlog.get_logger(__name__)
+
+# Failure threshold — if a model scores below this on a category,
+# the category is added to its fails_on list.
+_FAILURE_THRESHOLD: float = 0.5
+
+
+class CapabilityMatrixGenerator:
+    """Generate a capability matrix from benchmark evaluation results.
+
+    Parameters
+    ----------
+    matrix_path : str
+        Path to the capability matrix JSON file.
+    """
+
+    def __init__(self, matrix_path: str = "data/capability_matrix.json") -> None:
+        self._matrix_path = Path(matrix_path)
+        self._evaluator = BenchmarkEvaluator()
+
+    def generate(
+        self,
+        all_results: dict[str, list[BenchmarkResult]],
+    ) -> dict[str, Any]:
+        """Generate an updated capability matrix from benchmark results.
+
+        Parameters
+        ----------
+        all_results : dict[str, list[BenchmarkResult]]
+            Mapping of model_id → list of (scored) results.
+
+        Returns
+        -------
+        dict[str, Any]
+            The generated matrix data.
+        """
+        # Score all results
+        scored_results: list[BenchmarkResult] = []
+        for model_id, results in all_results.items():
+            self._evaluator.evaluate(results)
+            scored_results.extend(results)
+
+        # Aggregate scores
+        aggregated = self._evaluator.aggregate_scores(scored_results)
+
+        # Load existing matrix (preserve cost data)
+        try:
+            matrix = CapabilityMatrix(str(self._matrix_path))
+            existing_data = {
+                model_id: matrix.get_model_capabilities(model_id) or {}
+                for model_id in matrix.get_all_models()
+            }
+        except Exception:
+            existing_data = {}
+
+        # Build updated matrix
+        updated: dict[str, Any] = {}
+        for model_id, category_scores in aggregated.items():
+            # Preserve existing cost data
+            existing = existing_data.get(model_id, {})
+
+            # Map category scores to capability dimensions
+            capabilities: dict[str, float] = {}
+            for dim in TASK_DIMENSIONS:
+                # Use benchmark score if available, else preserve existing
+                if dim in category_scores:
+                    capabilities[dim] = category_scores[dim]
+                elif dim in existing.get("capabilities", {}):
+                    capabilities[dim] = existing["capabilities"][dim]
+                else:
+                    capabilities[dim] = 0.5  # Default
+
+            # Identify failure patterns
+            fails_on: list[str] = [
+                dim for dim, score in capabilities.items()
+                if score < _FAILURE_THRESHOLD
+            ]
+
+            updated[model_id] = {
+                "capabilities": capabilities,
+                "cost_per_1k_input": existing.get("cost_per_1k_input", 0.0002),
+                "cost_per_1k_output": existing.get("cost_per_1k_output", 0.0004),
+                "avg_output_multiplier": existing.get("avg_output_multiplier", 1.0),
+                "max_context": existing.get("max_context", 256000),
+                "fails_on": fails_on,
+                "avg_latency_ms": self._compute_avg_latency(
+                    all_results.get(model_id, [])
+                ),
+            }
+
+        logger.info(
+            "matrix_generator.complete",
+            models=list(updated.keys()),
+            path=str(self._matrix_path),
+        )
+        return updated
+
+    def generate_and_save(
+        self,
+        all_results: dict[str, list[BenchmarkResult]],
+    ) -> dict[str, Any]:
+        """Generate the matrix and save to disk.
+
+        Returns the generated matrix data.
+        """
+        data = self.generate(all_results)
+        self._matrix_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._matrix_path.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+        logger.info("matrix_generator.saved", path=str(self._matrix_path))
+        return data
+
+    def generate_report(
+        self,
+        all_results: dict[str, list[BenchmarkResult]],
+    ) -> str:
+        """Generate a human-readable markdown benchmark report.
+
+        Returns
+        -------
+        str
+            Markdown-formatted report.
+        """
+        # Score all results
+        scored_results: list[BenchmarkResult] = []
+        for results in all_results.values():
+            self._evaluator.evaluate(results)
+            scored_results.extend(results)
+
+        aggregated = self._evaluator.aggregate_scores(scored_results)
+
+        lines: list[str] = [
+            "# OptiRoute Benchmark Report\n",
+            "## Model Capability Scores\n",
+        ]
+
+        # Collect all categories
+        all_categories = set()
+        for scores in aggregated.values():
+            all_categories.update(scores.keys())
+        categories = sorted(all_categories)
+
+        # Table header
+        header = "| Model | " + " | ".join(categories) + " | Avg |"
+        separator = "|---|" + "|".join(["---"] * len(categories)) + "|---|"
+        lines.append(header)
+        lines.append(separator)
+
+        # Table rows
+        for model_id, scores in sorted(aggregated.items()):
+            values = [f"{scores.get(c, 0.0):.2f}" for c in categories]
+            avg = sum(scores.values()) / len(scores) if scores else 0.0
+            row = f"| {model_id} | " + " | ".join(values) + f" | {avg:.2f} |"
+            lines.append(row)
+
+        lines.append("")
+
+        # Failure patterns
+        lines.append("## Failure Patterns\n")
+        for model_id, scores in sorted(aggregated.items()):
+            failures = [c for c, s in scores.items() if s < _FAILURE_THRESHOLD]
+            if failures:
+                lines.append(f"- **{model_id}**: fails on {', '.join(failures)}")
+            else:
+                lines.append(f"- **{model_id}**: no critical failures")
+
+        lines.append("")
+
+        # Cost summary
+        lines.append("## Token Usage Summary\n")
+        for model_id, results in all_results.items():
+            total_in = sum(r.tokens_input for r in results)
+            total_out = sum(r.tokens_output for r in results)
+            total_cost = sum(r.cost for r in results)
+            lines.append(
+                f"- **{model_id}**: {total_in} in / {total_out} out / ${total_cost:.6f}"
+            )
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _compute_avg_latency(results: list[BenchmarkResult]) -> float:
+        """Compute average latency across results."""
+        if not results:
+            return 0.0
+        return round(
+            sum(r.latency_ms for r in results) / len(results), 1
+        )

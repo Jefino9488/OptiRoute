@@ -1,0 +1,22 @@
+[
+  {"prompt": "Write a Python function that returns the nth Fibonacci number.", "expected_output": "def fibonacci", "category": "code", "difficulty": "easy"},
+  {"prompt": "Write a Python function to check if a string is a palindrome.", "expected_output": "def is_palindrome", "category": "code", "difficulty": "easy"},
+  {"prompt": "Implement binary search in Python.", "expected_output": "def binary_search", "category": "code", "difficulty": "medium"},
+  {"prompt": "Write a Python function to merge two sorted lists into one sorted list.", "expected_output": "def merge_sorted", "category": "code", "difficulty": "medium"},
+  {"prompt": "Implement a stack data structure in Python using a list.", "expected_output": "class Stack", "category": "code", "difficulty": "easy"},
+  {"prompt": "Write a Python function that finds the maximum subarray sum (Kadane's algorithm).", "expected_output": "def max_subarray", "category": "code", "difficulty": "hard"},
+  {"prompt": "Write a Python function to flatten a nested list.", "expected_output": "def flatten", "category": "code", "difficulty": "medium"},
+  {"prompt": "Implement a simple LRU cache in Python.", "expected_output": "class LRUCache", "category": "code", "difficulty": "hard"},
+  {"prompt": "Write a Python function to count the frequency of words in a string.", "expected_output": "def word_frequency", "category": "code", "difficulty": "easy"},
+  {"prompt": "Write a Python function that reverses a linked list.", "expected_output": "def reverse_linked_list", "category": "code", "difficulty": "medium"},
+  {"prompt": "Implement bubble sort in Python.", "expected_output": "def bubble_sort", "category": "code", "difficulty": "easy"},
+  {"prompt": "Write a Python function to find all permutations of a string.", "expected_output": "def permutations", "category": "code", "difficulty": "medium"},
+  {"prompt": "Write a Python class for a binary search tree with insert and search methods.", "expected_output": "class BST", "category": "code", "difficulty": "hard"},
+  {"prompt": "Write a Python function to validate if a string of parentheses is balanced.", "expected_output": "def is_balanced", "category": "code", "difficulty": "medium"},
+  {"prompt": "Implement the quicksort algorithm in Python.", "expected_output": "def quicksort", "category": "code", "difficulty": "medium"},
+  {"prompt": "Write a Python decorator that measures function execution time.", "expected_output": "def timer", "category": "code", "difficulty": "medium"},
+  {"prompt": "Write a Python function to find the longest common substring of two strings.", "expected_output": "def longest_common_substring", "category": "code", "difficulty": "hard"},
+  {"prompt": "Write a Python generator that yields prime numbers.", "expected_output": "def primes", "category": "code", "difficulty": "medium"},
+  {"prompt": "Implement a basic graph class with BFS traversal in Python.", "expected_output": "class Graph", "category": "code", "difficulty": "hard"},
+  {"prompt": "Write a Python function that converts a Roman numeral string to an integer.", "expected_output": "def roman_to_int", "category": "code", "difficulty": "medium"}
+]
