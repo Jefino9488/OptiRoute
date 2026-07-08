@@ -43,11 +43,14 @@ async def route_prompt(request: RouteRequest) -> RouteResponse:
     """
     pipeline = get_pipeline()
 
-    result = await pipeline.route(
-        prompt=request.prompt,
-        required_accuracy=request.required_accuracy,
-        force_model=request.force_model,
-    )
+    try:
+        result = await pipeline.route(
+            prompt=request.prompt,
+            required_accuracy=request.required_accuracy,
+            force_model=request.force_model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     return RouteResponse(**result)
 
