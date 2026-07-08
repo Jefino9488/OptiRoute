@@ -151,6 +151,35 @@ _MULTI_STEP_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# Explicit instruction patterns:
+# These regex patterns will be used estimate output length
+
+_BREVITY_PATTERNS = re.compile(
+    r"\b(briefly|be brief|keep it brief|in brief|in short|one word|"
+    r"one sentence|tldr|tl;dr|just the answer|no explanation|concise|"
+    r"quick answer|yes or no|in \d+ words? or less|short answer)\b",
+    re.IGNORECASE,
+)
+
+_VERBOSITY_PATTERNS = re.compile(
+    r"\b(explain\w* in detail|step by step|show your work|elaborate\w*|"
+    r"comprehensive|in-depth|walk me (through|thorough\w*)|"
+    r"with examples|detailed explanation|justify)\b",
+    re.IGNORECASE,
+)
+
+_FORMAT_LONG_PATTERNS = re.compile(
+    r"\b(write a? ?(essay|article|story|report|script)|"
+    r"generate .*(code|function|class)|full implementation)\b",
+    re.IGNORECASE,
+)
+
+_FORMAT_SHORT_PATTERNS = re.compile(
+    r"\b(what is|what's|how many|which one|true or false|"
+    r"is it|does it|can you confirm)\b",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helper: count pattern matches
