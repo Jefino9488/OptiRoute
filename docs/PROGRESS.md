@@ -4,18 +4,18 @@
 > **Last Updated:** 2026-07-08
 
 ## Phase 1: Documentation & Architecture Updates
-- [ ] Update `docs/ARCHITECTURE.md` — Add local model layer to diagrams
-- [ ] Update `docs/ROUTING_ALGORITHM.md` — Add context length pre-check + local routing
-- [ ] Update `docs/CAPABILITY_MATRIX.md` — Document `is_local` flag + $0 cost entries
-- [ ] Update `docs/IMPLEMENTATION_PLAN.md` — Add Phase 8: Local Model Executor
-- [ ] Update `.agents/AGENTS.md` — Update architecture, constraints, component table
-- [ ] Update `README.md` — Update features, architecture diagram, env vars
-- [ ] Commit: `docs: update architecture for hybrid local+remote routing`
+- [x] Update `docs/ARCHITECTURE.md` — Add local model layer to diagrams
+- [x] Update `docs/ROUTING_ALGORITHM.md` — Add context length pre-check + local routing
+- [x] Update `docs/CAPABILITY_MATRIX.md` — Document `is_local` flag + $0 cost entries
+- [x] Update `docs/IMPLEMENTATION_PLAN.md` — Add Phase 8: Local Model Executor
+- [x] Update `.agents/AGENTS.md` — Update architecture, constraints, component table
+- [x] Update `README.md` — Update features, architecture diagram, env vars
+- [x] Commit: `docs: update architecture for hybrid local+remote routing`
 
 ## Phase 2: Configuration & Capability Matrix
-- [ ] Add local model settings to `app/config.py`
-- [ ] Add local model entry to `data/capability_matrix.json`
-- [ ] Commit: `feat(config): add configurable local model settings and capability entry`
+- [x] Add local model settings to `app/config.py`
+- [x] Add local model entry to `data/capability_matrix.json`
+- [x] Commit: `feat(config): add configurable local model settings and capability entry`
 
 ## Phase 3: Local Model Executor
 - [ ] Create `app/executors/local.py` — LocalExecutor class
