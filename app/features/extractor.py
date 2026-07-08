@@ -243,7 +243,7 @@ class FeatureExtractor:
         fv.task_type = self._classify_task_type(fv)
 
         # -- expected output length --
-        fv.expected_output_length = self._estimate_output_length(fv)
+        fv.expected_output_length = self._estimate_output_length(fv, prompt)
 
         # -- complexity --
         fv.complexity = self._estimate_complexity(fv)
@@ -291,16 +291,17 @@ class FeatureExtractor:
 
         return max(scores, key=scores.get)  # type: ignore[arg-type]
 
-    def _estimate_output_length(self, fv: FeatureVector) -> str:
+    @staticmethod
+    def _estimate_output_length(fv: FeatureVector, prompt) -> str:
         """Heuristic estimate of expected output length."""
 
-        if _BREVITY_PATTERNS.search(self.prompt):
+        if _BREVITY_PATTERNS.search(prompt):
             return "short"
-        if _VERBOSITY_PATTERNS.search(self.prompt):
+        if _VERBOSITY_PATTERNS.search(prompt):
             return "long"
-        if _FORMAT_LONG_PATTERNS.search(self.prompt):
+        if _FORMAT_LONG_PATTERNS.search(prompt):
             return "long"
-        if _FORMAT_SHORT_PATTERNS.search(self.prompt) and not fv.requires_reasoning:
+        if _FORMAT_SHORT_PATTERNS.search(prompt) and not fv.requires_reasoning:
             return "short"
 
         # rest executes when prompt doesn't explicitly mention about length
