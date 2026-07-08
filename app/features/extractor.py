@@ -151,6 +151,35 @@ _MULTI_STEP_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# Explicit instruction patterns:
+# These regex patterns will be used estimate output length
+
+_BREVITY_PATTERNS = re.compile(
+    r"\b(briefly|be brief|keep it brief|in brief|in short|one word|"
+    r"one sentence|tldr|tl;dr|just the answer|no explanation|concise|"
+    r"quick answer|yes or no|in \d+ words? or less|short answer)\b",
+    re.IGNORECASE,
+)
+
+_VERBOSITY_PATTERNS = re.compile(
+    r"\b(explain\w* in detail|step by step|show your work|elaborate\w*|"
+    r"comprehensive|in-depth|walk me (through|thorough\w*)|"
+    r"with examples|detailed explanation|justify)\b",
+    re.IGNORECASE,
+)
+
+_FORMAT_LONG_PATTERNS = re.compile(
+    r"\b(write a? ?(essay|article|story|report|script)|"
+    r"generate .*(code|function|class)|full implementation)\b",
+    re.IGNORECASE,
+)
+
+_FORMAT_SHORT_PATTERNS = re.compile(
+    r"\b(what is|what's|how many|which one|true or false|"
+    r"is it|does it|can you confirm)\b",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helper: count pattern matches
@@ -181,6 +210,7 @@ class FeatureExtractor:
             Populated feature vector with detected task type, flags,
             and complexity estimate.
         """
+        self.prompt = prompt
         fv = FeatureVector()
 
         # -- word count --
@@ -213,7 +243,7 @@ class FeatureExtractor:
         fv.task_type = self._classify_task_type(fv)
 
         # -- expected output length --
-        fv.expected_output_length = self._estimate_output_length(fv)
+        fv.expected_output_length = self._estimate_output_length(fv, prompt)
 
         # -- complexity --
         fv.complexity = self._estimate_complexity(fv)
@@ -262,8 +292,20 @@ class FeatureExtractor:
         return max(scores, key=scores.get)  # type: ignore[arg-type]
 
     @staticmethod
-    def _estimate_output_length(fv: FeatureVector) -> str:
+    def _estimate_output_length(fv: FeatureVector, prompt) -> str:
         """Heuristic estimate of expected output length."""
+
+        if _BREVITY_PATTERNS.search(prompt):
+            return "short"
+        if _VERBOSITY_PATTERNS.search(prompt):
+            return "long"
+        if _FORMAT_LONG_PATTERNS.search(prompt):
+            return "long"
+        if _FORMAT_SHORT_PATTERNS.search(prompt) and not fv.requires_reasoning:
+            return "short"
+
+        # rest executes when prompt doesn't explicitly mention about length
+
         if fv.is_creative:
             return "long"
         if fv.contains_code:
