@@ -171,6 +171,12 @@ class RoutingPipeline:
             if best_result is not None:
                 # We're escalating
                 eligible = self._matrix.get_capable_models(task_dict, required_accuracy)
+                for m in eligible:
+                    m["estimated_cost"] = self._matrix.estimate_cost(
+                        m["model_id"],
+                        resource_dict.get("input_tokens", 0),
+                        resource_dict.get("output_tokens", 0),
+                    )
                 eligible.sort(key=lambda m: m.get("estimated_cost", float("inf")))
                 next_model = self._policy.get_next_model(
                     current_model, eligible, escalation_depth,
