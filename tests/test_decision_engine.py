@@ -60,16 +60,20 @@ def policy() -> EscalationPolicy:
 
 def test_math_task_routes_to_cheapest(engine: DecisionEngine) -> None:
     """A general math task (not simple enough for deterministic) should pick
-    the cheapest model whose weighted accuracy >= 0.8."""
+    the cheapest Fireworks model whose weighted accuracy >= 0.75.
+
+    With gemma models removed, eligible Fireworks models are minimax-m3 and
+    kimi-k2p7-code. Local model has 'reasoning' in fails_on so may be filtered.
+    """
     task_vector = {"math": 0.8, "reasoning": 0.2}
     resource_vector = {"input_tokens": 200, "output_tokens": 150, "complexity": 0.5}
     risk_vector: dict = {}
 
-    decision = engine.select_model(task_vector, resource_vector, risk_vector)
+    decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
-    assert decision.model_selected == "gemma-4-26b-a4b-it"
-    assert decision.predicted_accuracy >= 0.8
-    assert decision.estimated_cost > 0
+    # minimax-m3 is the cheapest that clears 0.75 accuracy threshold for math
+    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b")
+    assert decision.predicted_accuracy >= 0.75
     assert not decision.is_deterministic
 
 
@@ -187,18 +191,19 @@ def test_kimi_cost_includes_output_multiplier(
     output_tokens = 1000
 
     kimi_cost = capability_matrix.estimate_cost("kimi-k2p7-code", input_tokens, output_tokens)
-    gemma_cost = capability_matrix.estimate_cost("gemma-4-31b-it", input_tokens, output_tokens)
+    local_cost = capability_matrix.estimate_cost("local:qwen-2.5-3b", input_tokens, output_tokens)
 
     assert kimi_cost is not None
-    assert gemma_cost is not None
+    assert local_cost is not None
 
     # Kimi: 1000 * 0.00095/1000 + 1000 * 1.3 * 0.004/1000
     #      = 0.00095 + 0.0052 = 0.00615
     expected_kimi = 1000 * 0.00095 / 1000 + 1000 * 1.3 * 0.004 / 1000
     assert abs(kimi_cost - expected_kimi) < 1e-9
 
-    # Kimi should be significantly more expensive than Gemma 31B
-    assert kimi_cost > gemma_cost * 2
+    # Local model is always $0 — kimi must be more expensive
+    assert local_cost == 0.0
+    assert kimi_cost > 0
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +274,11 @@ def test_routing_decision_to_dict() -> None:
 
 def test_weighted_accuracy_computation(capability_matrix: CapabilityMatrix) -> None:
     """Verify weighted accuracy formula: Σ(w*c)/Σ(w)."""
-    # gemma-4-26b-a4b-it: math=0.82, reasoning=0.79
+    # minimax-m3: math=0.94, reasoning=0.93
     task_vector = {"math": 0.6, "reasoning": 0.4}
-    expected = (0.6 * 0.82 + 0.4 * 0.79) / (0.6 + 0.4)
+    expected = (0.6 * 0.94 + 0.4 * 0.93) / (0.6 + 0.4)
     # Use the static method directly
-    caps = capability_matrix.get_model_capabilities("gemma-4-26b-a4b-it")
+    caps = capability_matrix.get_model_capabilities("minimax-m3")
     assert caps is not None
     actual = CapabilityMatrix._compute_weighted_accuracy(task_vector, caps["capabilities"])
     assert abs(actual - expected) < 1e-9
