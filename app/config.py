@@ -2,14 +2,18 @@
 
 All configuration is loaded from environment variables.
 Uses lru_cache for singleton access via get_settings().
+
+IMPORTANT: FIREWORKS_API_KEY, FIREWORKS_BASE_URL, and ALLOWED_MODELS are
+injected by the evaluation harness at runtime. Do not hardcode them.
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import ClassVar
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -19,33 +23,35 @@ class Settings(BaseSettings):
     # --- Fireworks AI ---
     fireworks_api_key: str = Field(
         ...,
-        description="Fireworks AI API key (required)",
+        description="Fireworks AI API key — injected by harness, do not hardcode",
     )
     fireworks_base_url: str = Field(
         default="https://api.fireworks.ai/inference/v1",
-        description="Fireworks AI base URL for OpenAI-compatible API",
+        description="Fireworks AI base URL — MUST use FIREWORKS_BASE_URL from harness",
     )
 
     # --- Allowed Models ---
-    # Mapping of short model names → full Fireworks model paths.
-    # This is not loaded from env; it's a constant registry.
-    allowed_models: dict[str, str] = Field(
-        default={
-            "minimax-m3": "accounts/fireworks/models/minimax-m3",
-            "kimi-k2p7-code": "accounts/fireworks/models/kimi-k2p7-code",
-            "gemma-4-31b-it": "accounts/fireworks/models/gemma-4-31b-it",
-            "gemma-4-26b-a4b-it": "accounts/fireworks/models/gemma-4-26b-a4b-it",
-            "gemma-4-31b-it-nvfp4": "accounts/fireworks/models/gemma-4-31b-it-nvfp4",
-        },
-        description="Registry of allowed Fireworks AI models",
+    # The harness injects ALLOWED_MODELS as a comma-separated list of full model paths.
+    # e.g. "accounts/fireworks/models/minimax-m3,accounts/fireworks/models/kimi-k2p7-code"
+    # We parse this at runtime to build the short_name → full_path registry.
+    allowed_models_raw: str = Field(
+        default="",
+        alias="ALLOWED_MODELS",
+        description="Comma-separated full Fireworks model IDs from harness env var",
     )
+
+    # Fallback for local dev when harness is not present
+    _local_dev_models: ClassVar[dict[str, str]] = {
+        "minimax-m3": "accounts/fireworks/models/minimax-m3",
+        "kimi-k2p7-code": "accounts/fireworks/models/kimi-k2p7-code",
+    }
 
     # --- Routing Thresholds ---
     default_accuracy_threshold: float = Field(
-        default=0.8,
+        default=0.75,
         ge=0.0,
         le=1.0,
-        description="Minimum accuracy threshold for model selection",
+        description="Minimum accuracy threshold — lowered to 0.75 to allow local model",
     )
     max_escalation_depth: int = Field(
         default=2,
@@ -78,22 +84,26 @@ class Settings(BaseSettings):
         description="Enable local model inference for $0 Fireworks token cost",
     )
     local_model_path: str = Field(
-        default="models/qwen2.5-3b-instruct-q4_k_m.gguf",
-        description="Path to GGUF model weights file",
+        default="models/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+        description="Path to GGUF model weights file (Qwen2.5-3B-Instruct Q4_K_M)",
     )
     local_model_name: str = Field(
         default="local:qwen-2.5-3b",
         description="Local model identifier in the capability matrix",
     )
     local_model_context_length: int = Field(
-        default=2048,
+        default=4096,
         ge=256,
         description="Max context window for local model (tokens)",
     )
     local_model_threads: int = Field(
         default=2,
         ge=1,
-        description="CPU threads for local model inference",
+        description="CPU threads for local model inference (match harness vCPU count)",
+    )
+    local_router_enabled: bool = Field(
+        default=True,
+        description="Use local LLM to make routing decisions (not just execution)",
     )
 
     model_config = {
@@ -101,9 +111,30 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "extra": "ignore",
+        "populate_by_name": True,  # allow alias AND field name
     }
 
-    # --- Helpers ---
+    # --- Computed Properties ---
+
+    @property
+    def allowed_models(self) -> dict[str, str]:
+        """Parse ALLOWED_MODELS env var into {short_name: full_path} dict.
+
+        The harness injects full model paths like:
+            accounts/fireworks/models/minimax-m3
+
+        We extract the short name (last path segment) for internal use.
+        Falls back to local dev defaults when env var is not set.
+        """
+        if not self.allowed_models_raw.strip():
+            return dict(self._local_dev_models)  # local dev fallback
+        result: dict[str, str] = {}
+        for full in self.allowed_models_raw.split(","):
+            full = full.strip()
+            if full:
+                short = full.rsplit("/", 1)[-1]  # last segment = short name
+                result[short] = full
+        return result if result else dict(self._local_dev_models)
 
     def get_model_path(self, short_name: str) -> str:
         """Resolve a short model name to its full Fireworks API path.
@@ -117,12 +148,13 @@ class Settings(BaseSettings):
         Raises:
             ValueError: If the model name is not in the allowed list.
         """
-        if short_name not in self.allowed_models:
+        models = self.allowed_models
+        if short_name not in models:
             raise ValueError(
-                f"Model '{short_name}' is not allowed. "
-                f"Allowed: {list(self.allowed_models.keys())}"
+                f"Model '{short_name}' is not in ALLOWED_MODELS. "
+                f"Allowed: {list(models.keys())}"
             )
-        return self.allowed_models[short_name]
+        return models[short_name]
 
     @property
     def capability_matrix_file(self) -> Path:
