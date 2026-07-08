@@ -35,76 +35,22 @@
     "fails_on": ["creative", "translation"],
     "avg_latency_ms": 3000
   },
-  "gemma-4-31b-it": {
-    "capabilities": {
-      "math": 0.88,
-      "reasoning": 0.86,
-      "code": 0.82,
-      "creative": 0.84,
-      "translation": 0.85,
-      "extraction": 0.87,
-      "retrieval": 0.85,
-      "general_qa": 0.87
-    },
-    "cost_per_1k_input": 0.0002,
-    "cost_per_1k_output": 0.0004,
-    "avg_output_multiplier": 1.0,
-    "max_context": 262000,
-    "fails_on": [],
-    "avg_latency_ms": 1500
-  },
-  "gemma-4-26b-a4b-it": {
-    "capabilities": {
-      "math": 0.82,
-      "reasoning": 0.79,
-      "code": 0.75,
-      "creative": 0.80,
-      "translation": 0.82,
-      "extraction": 0.83,
-      "retrieval": 0.81,
-      "general_qa": 0.83
-    },
-    "cost_per_1k_input": 0.0001,
-    "cost_per_1k_output": 0.0003,
-    "avg_output_multiplier": 1.0,
-    "max_context": 256000,
-    "fails_on": [],
-    "avg_latency_ms": 1000
-  },
-  "gemma-4-31b-it-nvfp4": {
-    "capabilities": {
-      "math": 0.86,
-      "reasoning": 0.84,
-      "code": 0.80,
-      "creative": 0.82,
-      "translation": 0.83,
-      "extraction": 0.85,
-      "retrieval": 0.83,
-      "general_qa": 0.85
-    },
-    "cost_per_1k_input": 0.00015,
-    "cost_per_1k_output": 0.00035,
-    "avg_output_multiplier": 1.0,
-    "max_context": 262000,
-    "fails_on": [],
-    "avg_latency_ms": 1200
-  },
   "local:qwen-2.5-3b": {
     "capabilities": {
-      "math": 0.55,
-      "reasoning": 0.50,
-      "code": 0.45,
-      "creative": 0.65,
-      "translation": 0.60,
-      "extraction": 0.60,
-      "retrieval": 0.70,
-      "general_qa": 0.72
+      "math": 0.58,
+      "reasoning": 0.55,
+      "code": 0.35,
+      "creative": 0.62,
+      "translation": 0.68,
+      "extraction": 0.72,
+      "retrieval": 0.76,
+      "general_qa": 0.75
     },
     "cost_per_1k_input": 0.0,
     "cost_per_1k_output": 0.0,
     "avg_output_multiplier": 1.0,
-    "max_context": 2048,
-    "fails_on": ["code", "math"],
+    "max_context": 4096,
+    "fails_on": ["code", "reasoning"],
     "avg_latency_ms": 3000,
     "is_local": true
   }
