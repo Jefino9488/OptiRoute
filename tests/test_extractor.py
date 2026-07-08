@@ -1,6 +1,7 @@
 """Tests for app.features.extractor — FeatureExtractor."""
 
 from __future__ import annotations
+from typing import Literal
 
 import pytest
 
@@ -163,6 +164,33 @@ class TestComplexity:
 
 class TestOutputLength:
     """Expected output length heuristic."""
+
+    @pytest.mark.parametrize("prompt, expected_result", [
+
+        # _BREVITY_PATTERNS
+        ("Explain in brief, how photosynthesis works?", "short"),
+        ("This briefing document needs review", "short"),
+
+        # _VERBOSITY_PATTERNS
+        ("Explain step by step how a car engine works", "long"),
+        ("This document is thoroughly outdated", "short"),
+
+        # _FORMAT_LONG_PATTERNS
+        ("Write an essay on climate change", "long"),
+        ("The write function in this class is broken", "medium"),
+
+        # _FORMAT_SHORT_PATTERNS
+        ("How many continents are there?", "short"),
+        ("Is it categorically true that geckos regrow tails?", "short"),
+
+        # priority conflict: brevity word present but contradicted later
+        ("He was brief in his reply, but I need the full history of Rome explained in detail", "long"),
+
+    ])
+    def test_content_pattern_classification(self, prompt: str, expected_result: Literal["short", "medium", "long"], extractor: FeatureExtractor):
+        fv = extractor.extract(prompt)
+        assert fv.expected_output_length == expected_result
+
 
     def test_creative_is_long(self, extractor: FeatureExtractor) -> None:
         fv = extractor.extract("Write a story about space exploration")
