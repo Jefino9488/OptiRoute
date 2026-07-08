@@ -75,7 +75,7 @@ eligible = [
 ]
 ```
 
-Default `required_accuracy = 0.8`. Can be tuned per-request.
+Default `required_accuracy = 0.75`. Can be tuned per-request. This value allows the local Qwen2.5-3B model to win routing for categories where its accuracy is ~0.72–0.76 (NER, sentiment, summarisation, factual QA).
 
 ### Step 5: Cost Estimation
 
@@ -137,6 +137,16 @@ After execution, the Confidence Validator checks the response. If confidence < t
 
 ---
 
+## Local LLM Routing Step
+
+Before the full 6-step algorithm runs, the pipeline first asks the **local model itself** to make the routing decision (max_tokens=15, temperature=0.0):
+
+```python
+routed = await local_executor.route(prompt)  # returns 'local', 'kimi-k2p7-code', or 'minimax-m3'
+```
+
+This is faster and often more accurate than heuristic vectors for the 8 real evaluation categories. The full 6-step capability-matrix algorithm acts as a **fallback** when the local model is unavailable.
+
 ## Routing Decision Output
 
 Every decision includes a human-readable explanation:
@@ -145,11 +155,11 @@ Every decision includes a human-readable explanation:
 {
   "model_selected": "local:qwen-2.5-3b",
   "estimated_cost": 0.0,
-  "predicted_accuracy": 0.73,
-  "reasoning": "Task is primarily general_qa (0.73). local:qwen-2.5-3b meets accuracy threshold (0.73 >= 0.70) at lowest cost ($0.00000). Zero Fireworks token cost.",
+  "predicted_accuracy": 0.75,
+  "reasoning": "Local LLM router → local model ($0 Fireworks tokens)",
   "alternatives_considered": [
-    {"model": "gemma-4-26b-a4b-it", "cost": 0.00003, "accuracy": 0.85},
-    {"model": "gemma-4-31b-it-nvfp4", "cost": 0.00004, "accuracy": 0.87}
+    {"model": "minimax-m3", "cost": 0.00024, "accuracy": 0.938},
+    {"model": "kimi-k2p7-code", "cost": 0.00215, "accuracy": 0.820}
   ]
 }
 ```

@@ -63,20 +63,20 @@ Local models are entries with `cost_per_1k_input = 0.0` and `cost_per_1k_output 
 ```json
 "local:qwen-2.5-3b": {
     "capabilities": {
-        "math": 0.55,
-        "reasoning": 0.50,
-        "code": 0.45,
-        "creative": 0.65,
-        "translation": 0.60,
-        "extraction": 0.60,
-        "retrieval": 0.70,
-        "general_qa": 0.72
+        "math": 0.58,
+        "reasoning": 0.55,
+        "code": 0.35,
+        "creative": 0.62,
+        "translation": 0.68,
+        "extraction": 0.72,
+        "retrieval": 0.76,
+        "general_qa": 0.75
     },
     "cost_per_1k_input": 0.0,
     "cost_per_1k_output": 0.0,
     "avg_output_multiplier": 1.0,
-    "max_context": 2048,
-    "fails_on": ["code", "math"],
+    "max_context": 4096,
+    "fails_on": ["code", "reasoning"],
     "avg_latency_ms": 3000,
     "is_local": true
 }
@@ -86,7 +86,7 @@ Local models are entries with `cost_per_1k_input = 0.0` and `cost_per_1k_output 
 
 ### Context Length Constraint
 
-The local model's `max_context` (typically 2048 tokens) is much smaller than Fireworks models (256K+). The pipeline performs a **pre-check** before dispatching to the local model:
+The local model's `max_context` (4096 tokens for Qwen2.5-3B) is much smaller than Fireworks models (256K+). The pipeline performs a **pre-check** before dispatching to the local model:
 - If the estimated input tokens exceed 90% of `max_context`, skip the local model entirely
 - This prevents wasting latency on a model that will almost certainly truncate or fail
 

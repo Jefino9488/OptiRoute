@@ -18,17 +18,17 @@ OptiRoute is an **Adaptive Capability-Based Hybrid AI Routing Framework**. It mi
 | Model | Architecture | Strengths | Input $/1M | Output $/1M | Context |
 |---|---|---|---|---|---|
 | **minimax-m3** | 428B MoE (sparse) | Frontier-level coding, reasoning, 1M context | $0.30 | $1.20 | 512K |
-| **kimi-k2p7-code** | 1T MoE (32B active) | Elite coding, mandatory thinking mode | $0.95 | $4.00 | 256K |
-| **gemma-4-31b-it** | 31B dense | Strong general reasoning | ~$0.20 | ~$0.40 | 262K |
-| **gemma-4-26b-a4b-it** | 26B (A4B sparse) | Cheapest, fast | ~$0.10 | ~$0.30 | 256K |
-| **gemma-4-31b-it-nvfp4** | 31B quantized (NF4) | Faster/cheaper than full 31B | ~$0.15 | ~$0.35 | 262K |
+| **kimi-k2p7-code** | 1T MoE (32B active) | Elite coding, mandatory thinking mode (+1.3× output) | $0.95 | $4.00 | 256K |
+
+> **Note**: Gemma models (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`, `gemma-4-31b-it-nvfp4`) are currently non-functional on Fireworks and have been removed from the active capability matrix.
 
 ### Local Model (Configurable)
 
 | Model | Format | Size | Context | Cost |
 |---|---|---|---|---|
-| **Qwen 2.5 3B Instruct** (default) | GGUF Q4_K_M | ~1.93 GB | 2048 | $0.00 |
-| **Gemma 3 1B** (fallback) | GGUF Q4_K_M | ~806 MB | 2048 | $0.00 |
+| **Qwen2.5-3B-Instruct** (default) | GGUF Q4_K_M | ~1.9 GB | 4096 | $0.00 |
+
+Injected by env var `LOCAL_MODEL_PATH`. Swap without code changes.
 
 ---
 
@@ -90,17 +90,18 @@ Confident? → Yes → Cache + Log + Return
 ### Phase 7 — Polish ✅
 - README, Dockerfile, edge cases, final testing
 
-### Phase 8 — Local Model Executor 🔄
-- [ ] Update all documentation for hybrid architecture
-- [ ] Add configurable local model settings to `app/config.py`
-- [ ] Add local model entry to `data/capability_matrix.json`
-- [ ] Create `app/executors/local.py` — LocalExecutor class
-- [ ] Update `app/router/pipeline.py` — prefix dispatch + context length pre-check
-- [ ] Add `llama-cpp-python` to `pyproject.toml`
-- [ ] Create `scripts/download_model.sh`
-- [ ] Update `Dockerfile` — bundle model weights
-- [ ] Create `tests/test_local_executor.py`
-- [ ] End-to-end verification under 4GB RAM / 2 vCPU constraints
+### Phase 8 — Local Model Executor ✅
+- [x] Add `llama-cpp-python` to `pyproject.toml` with pre-built CPU wheel index
+- [x] Parse `ALLOWED_MODELS` from harness env at runtime in `app/config.py`
+- [x] Update `data/capability_matrix.json` — remove gemma, update Qwen2.5-3B scores
+- [x] Create `app/executors/local.py` — LocalExecutor with route() + execute()
+- [x] Update `app/router/pipeline.py` — 4-level routing chain + local dispatch
+- [x] Create `agent.py` — batch evaluation entrypoint (reads /input, writes /output)
+- [x] Create `scripts/download_model.sh` — model download helper
+- [x] Update `Dockerfile` — multi-stage build, CMD → agent.py
+- [x] Create `tests/test_local_executor.py` (21 tests) + `tests/test_agent.py` (6 tests)
+- [x] Full test suite: **154 passed, 0 failed**
+- [ ] End-to-end verification under 4GB RAM / 2 vCPU constraints (requires GGUF download)
 
 ---
 

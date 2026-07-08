@@ -5,15 +5,17 @@
 ```
                           Client / Evaluation Harness
                                      │
-                                     ▼
-                         ┌───────────────────────┐
-                         │   FastAPI API Layer    │
-                         │   POST /v1/route       │
-                         └───────────┬───────────┘
+                          ┌──────────┴──────────┐
+                          │                     │
+                    agent.py               FastAPI API
+                 (batch eval)         POST /v1/route
+                 reads /input          (local dev)
+                 writes /output
+                          └───────────┬───────────┘
                                      │
                                      ▼
-                         ┌───────────────────────┐
-                         │  Request Normalizer    │
+                          ┌───────────────────────┐
+                          │   Request Normalizer   │
                          │  (filler removal,      │
                          │   canonical form,      │
                          │   hashing)             │
@@ -48,15 +50,16 @@
                          └───────────┬───────────┘
                                      │
                                      ▼
-                         ┌───────────────────────┐
-                         │   Decision Engine      │
-                         │                        │
-                         │  1. Deterministic?     │──Yes──→ Tool Executor ($0)
-                         │  2. Filter failures    │
-                         │  3. Score capabilities  │
-                         │  4. Estimate costs     │
-                         │  5. Pick cheapest      │
-                         └───────────┬───────────┘
+                          ┌───────────────────────┐
+                          │   Decision Engine      │
+                          │                        │
+                          │  1. force_model?       │──Yes──→ Forced model
+                          │  2. Deterministic?     │──Yes──→ Tool ($0)
+                          │  3. Local LLM router   │──────→ local|kimi|minimax
+                          │     (max_tokens=15)    │
+                          │  4. Heuristic engine   │──────→ Capability matrix
+                          │     (fallback)         │
+                          └───────────┬───────────┘
                                      │
                          ┌───────────┴───────────┐
                          │                       │
@@ -163,7 +166,7 @@ models/
 
 ### Request Processing
 ```
-RouteRequest(prompt, required_accuracy=0.8)
+RouteRequest(prompt, required_accuracy=0.75)
     ↓
 NormalizedPrompt(raw, normalized, hash)
     ↓
@@ -173,10 +176,10 @@ TaskVector({math: 0.82, reasoning: 0.61, code: 0.05, ...})
 ResourceVector({expected_input_tokens: 45, expected_output_tokens: 150, ...})
 RiskVector({needs_json: false, strict_formatting: false, ...})
     ↓
-RoutingDecision:
-  - Simple QA? → model="local:qwen-2.5-3b", cost=$0
-  - Complex code? → model="kimi-k2p7-code", cost=$$$
-  - General reasoning? → model="gemma-4-26b-a4b-it", cost=$
+RoutingDecision (4-level chain):
+  - Simple QA?   → local LLM router → "local" → model="local:qwen-2.5-3b", cost=$0
+  - Code task?   → local LLM router → "kimi-k2p7-code", cost=$$$
+  - Complex math?→ local LLM router → "minimax-m3", cost=$$
     ↓
 ExecutionResult(response="...", tokens_out=142, cost=0.0, confidence=0.92)
     ↓
