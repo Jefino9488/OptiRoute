@@ -1,4 +1,4 @@
-# Python
+# ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -7,29 +7,49 @@ dist/
 build/
 *.egg
 
-# Virtual environments
+# ── Virtual environments ──────────────────────────────────────────────────────
 .venv/
 venv/
 
-# IDE
+# ── Model weights (large binary files — downloaded during docker build) ───────
+models/
+*.gguf
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+
+# ── Spec & participant docs (not needed at runtime) ───────────────────────────
+spec/
+*.pdf
+
+# ── Agent decisions & planning docs ──────────────────────────────────────────
+agent-decisions/
+
+# ── Skill configs (CI/agent tooling only) ────────────────────────────────────
+.agents/
+skills-lock.json
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Environment
+# ── Environment files ─────────────────────────────────────────────────────────
 .env
 .env.local
 
-# Data artifacts (keep structure, ignore generated)
+# ── Data artifacts (keep structure, ignore generated) ─────────────────────────
 data/metrics/*.jsonl
 
-# Testing
+# ── Testing ───────────────────────────────────────────────────────────────────
 .pytest_cache/
 htmlcov/
 .coverage
 coverage.xml
 
-# OS
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

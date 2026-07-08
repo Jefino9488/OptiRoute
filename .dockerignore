@@ -1,0 +1,60 @@
+# ── Version control ───────────────────────────────────────────────────────────
+.git/
+
+# ── Python cache ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# ── Virtual environments (deps installed during docker build via uv sync) ──────
+.venv/
+venv/
+
+# ── Model weights (downloaded in Stage 2 of multi-stage build) ────────────────
+# Do NOT include here — the Dockerfile Stage 2 fetches them from HuggingFace.
+# Listing them in .dockerignore would break the COPY --from=model-downloader step.
+# models/     ← intentionally NOT excluded; Stage 2 bakes them in
+
+# ── Spec, docs, planning (runtime-irrelevant) ─────────────────────────────────
+spec/
+*.pdf
+agent-decisions/
+docs/
+
+# ── Agent tooling & CI configs ────────────────────────────────────────────────
+.agents/
+skills-lock.json
+.gemini/
+
+# ── IDE & OS noise ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Environment files (injected by harness at runtime) ────────────────────────
+.env
+.env.local
+.env.*
+
+# ── Test artefacts (not needed in production image) ───────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+tests/
+
+# ── Data artifacts (keep only the static JSON files needed at runtime) ─────────
+data/metrics/
+data/benchmarks/
+
+# ── HTTP test files ───────────────────────────────────────────────────────────
+*.http
+
+# ── Scripts used only for local dev ──────────────────────────────────────────
+scripts/
