@@ -211,7 +211,9 @@ class RoutingPipeline:
                 expected_code=features.contains_code,
                 expected_length=features.expected_output_length,
             )
-            result.confidence = validation.confidence
+            # Do not allow the validator to artificially raise the confidence 
+            # if the executor already marked it as 0.0 (e.g. API Error).
+            result.confidence = min(result.confidence, validation.confidence)
 
             if best_result is None or result.confidence > best_result.confidence:
                 best_result = result
