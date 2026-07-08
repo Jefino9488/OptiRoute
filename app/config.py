@@ -72,6 +72,30 @@ class Settings(BaseSettings):
         description="Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
 
+    # --- Local Model ---
+    local_model_enabled: bool = Field(
+        default=True,
+        description="Enable local model inference for $0 Fireworks token cost",
+    )
+    local_model_path: str = Field(
+        default="models/qwen2.5-3b-instruct-q4_k_m.gguf",
+        description="Path to GGUF model weights file",
+    )
+    local_model_name: str = Field(
+        default="local:qwen-2.5-3b",
+        description="Local model identifier in the capability matrix",
+    )
+    local_model_context_length: int = Field(
+        default=2048,
+        ge=256,
+        description="Max context window for local model (tokens)",
+    )
+    local_model_threads: int = Field(
+        default=2,
+        ge=1,
+        description="CPU threads for local model inference",
+    )
+
     model_config = {
         "env_prefix": "",
         "env_file": ".env",

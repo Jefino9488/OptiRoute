@@ -88,5 +88,24 @@
     "max_context": 262000,
     "fails_on": [],
     "avg_latency_ms": 1200
+  },
+  "local:qwen-2.5-3b": {
+    "capabilities": {
+      "math": 0.55,
+      "reasoning": 0.50,
+      "code": 0.45,
+      "creative": 0.65,
+      "translation": 0.60,
+      "extraction": 0.60,
+      "retrieval": 0.70,
+      "general_qa": 0.72
+    },
+    "cost_per_1k_input": 0.0,
+    "cost_per_1k_output": 0.0,
+    "avg_output_multiplier": 1.0,
+    "max_context": 2048,
+    "fails_on": ["code", "math"],
+    "avg_latency_ms": 3000,
+    "is_local": true
   }
 }
