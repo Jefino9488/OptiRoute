@@ -24,9 +24,6 @@ models/
 spec/
 *.pdf
 
-# ── Agent decisions & planning docs ──────────────────────────────────────────
-agent-decisions/
-
 # ── Skill configs (CI/agent tooling only) ────────────────────────────────────
 .agents/
 skills-lock.json
