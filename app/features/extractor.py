@@ -210,6 +210,7 @@ class FeatureExtractor:
             Populated feature vector with detected task type, flags,
             and complexity estimate.
         """
+        self.prompt = prompt
         fv = FeatureVector()
 
         # -- word count --
@@ -290,9 +291,20 @@ class FeatureExtractor:
 
         return max(scores, key=scores.get)  # type: ignore[arg-type]
 
-    @staticmethod
-    def _estimate_output_length(fv: FeatureVector) -> str:
+    def _estimate_output_length(self, fv: FeatureVector) -> str:
         """Heuristic estimate of expected output length."""
+
+        if _BREVITY_PATTERNS.search(self.prompt):
+            return "short"
+        if _VERBOSITY_PATTERNS.search(self.prompt):
+            return "long"
+        if _FORMAT_LONG_PATTERNS.search(self.prompt):
+            return "long"
+        if _FORMAT_SHORT_PATTERNS.search(self.prompt) and not fv.requires_reasoning:
+            return "short"
+
+        # rest executes when prompt doesn't explicitly mention about length
+
         if fv.is_creative:
             return "long"
         if fv.contains_code:
