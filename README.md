@@ -290,9 +290,9 @@ The Docker image bundles everything: Python runtime, `llama-cpp-python`, and the
 docker buildx build --platform linux/amd64 -t optiroute:latest .
 
 # The multi-stage build automatically downloads the GGUF (~1.9 GB) during build
-# Stage 1: install Python deps
+# Stage 1: install Python deps (llama-cpp-python compiled)
 # Stage 2: download Qwen2.5-3B-Instruct-Q4_K_M.gguf from HuggingFace
-# Stage 3: assemble lean runtime image (no build tools)
+# Stage 3: assemble lean runtime image — CMD runs /app/.venv/bin/python agent.py
 ```
 
 **Run (simulating the evaluation harness):**

@@ -99,4 +99,6 @@ EXPOSE 8000
 # Evaluation entrypoint:
 #   Reads  /input/tasks.json  → [{task_id, prompt}, ...]
 #   Writes /output/results.json → [{task_id, answer}, ...]
-CMD ["uv", "run", "python", "agent.py"]
+#
+# Use venv Python directly (faster startup, no uv lock resolution at runtime)
+CMD ["/app/.venv/bin/python", "agent.py"]
