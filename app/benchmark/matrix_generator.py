@@ -127,10 +127,18 @@ class CapabilityMatrixGenerator:
 
         Returns the generated matrix data.
         """
+        import datetime
         data = self.generate(all_results)
         self._matrix_path.parent.mkdir(parents=True, exist_ok=True)
         with self._matrix_path.open("w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
+            
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d")
+        version_dir = self._matrix_path.parent / "benchmarks" / timestamp
+        version_dir.mkdir(parents=True, exist_ok=True)
+        with (version_dir / "capability_matrix.json").open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            
         logger.info("matrix_generator.saved", path=str(self._matrix_path))
         return data
 
