@@ -111,35 +111,16 @@ Respond with exactly one word: local, kimi-k2p7-code, or minimax-m3."""
 _ROUTING_EXAMPLES: list[tuple[str, str]] = [
     # Factual knowledge → local
     ("What is the capital of France?", "local"),
-    ("Who wrote Romeo and Juliet?", "local"),
-    ("What is photosynthesis?", "local"),
-    ("What is the speed of light?", "local"),
     # Sentiment classification → local
     ("Classify the sentiment: 'Great battery life but the screen scratches easily.'", "local"),
-    ("What is the sentiment of: 'I loved the movie but the ending was disappointing.'", "local"),
     # Named entity recognition → local
     ("Extract all named entities from: Maria Sanchez joined Fireworks AI in Berlin last March.", "local"),
-    ("Identify the entities in: Apple Inc. was founded by Steve Jobs in Cupertino.", "local"),
-    # Text summarisation → local
-    ("Summarize this paragraph in one sentence:", "local"),
-    ("Condense the following text to two sentences:", "local"),
-    # Simple math → local
-    ("What is 15 * 23?", "local"),
-    ("What is 17% of 400?", "local"),
-    ("What is the square root of 144?", "local"),
     # Code debugging → kimi
     ("This function has a bug: def get_max(nums): return nums[0]. Find and fix it.", "kimi-k2p7-code"),
-    ("Debug this Python code: for i in range(10) print(i)", "kimi-k2p7-code"),
     # Code generation → kimi
     ("Write a Python function that returns the second-largest number in a list.", "kimi-k2p7-code"),
-    ("Implement a binary search algorithm in Java.", "kimi-k2p7-code"),
-    ("Write a function to check if a string is a palindrome.", "kimi-k2p7-code"),
     # Complex math word problems → minimax
     ("A store has 240 items. It sells 15% on Monday and 60 more on Tuesday. How many remain?", "minimax-m3"),
-    ("A car depreciates 15% per year. Starting at $20000, what is its value after 3 years?", "minimax-m3"),
-    # Logical/deductive reasoning → minimax
-    ("Three friends each own a different pet. Sam doesn't own the bird. Jo owns the dog. Who owns the cat?", "minimax-m3"),
-    ("If all A are B, and some B are C, what can we conclude about A and C?", "minimax-m3"),
 ]
 
 

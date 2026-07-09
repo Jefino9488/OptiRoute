@@ -68,11 +68,11 @@ _CODE_KEYWORDS_RE = re.compile(
 
 _MATH_KEYWORDS_RE = re.compile(
     r"\b(?:"
-    r"calculate|solve|equation|sum|product|integral|derivative|"
+    r"calculate|solve|equation|integral|derivative|"
     r"probability|factorial|logarithm|sqrt|square\s+root|"
-    r"multiply|divide|subtract|add|compute|arithmetic|"
+    r"multiply|divide|subtract|compute|arithmetic|"
     r"algebra|geometry|trigonometry|calculus|statistics|"
-    r"matrix|vector|determinant|eigenvalue|"
+    r"matrix|determinant|eigenvalue|"
     r"percentage|fraction|ratio|proportion"
     r")\b",
     re.IGNORECASE,
