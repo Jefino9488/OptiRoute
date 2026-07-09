@@ -159,12 +159,12 @@ class RoutingPipeline:
 
         task_dict = task_vec.to_dict()
         _BUCKET_MAP = {
-            "Small": 256,
-            "Medium": 512,
-            "Large": 1024,
-            "Very_Large": 2048,
+            "Small": 512,
+            "Medium": 1024,
+            "Large": 2048,
+            "Very_Large": 4096,
         }
-        output_tokens = _BUCKET_MAP.get(resource_vec.output_budget_bucket, 512)
+        output_tokens = _BUCKET_MAP.get(resource_vec.output_budget_bucket, 1024)
 
         resource_dict = {
             "input_tokens": resource_vec.expected_input_tokens,
