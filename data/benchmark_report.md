@@ -6,68 +6,68 @@
 
 | Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |
 |---|---|---|---|---|---|
-| local:qwen-2.5-3b | 0.96 | 9629ms | 139 | $0.000000 | >= 0.91 |
-| kimi-k2p7-code | 0.97 | 6433ms | 543 | $0.002841 | >= 0.92 |
-| minimax-m3 | 0.97 | 7391ms | 1132 | $0.001399 | >= 0.92 |
+| kimi-k2p7-code | 0.97 | 7119ms | 570 | $0.000000 | >= 0.92 |
+| local:qwen-2.5-3b | 0.96 | 9593ms | 139 | $0.000000 | >= 0.91 |
+| minimax-m3 | 0.91 | 6459ms | 979 | $0.000000 | >= 0.86 |
 
 ### Creative
 
 | Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |
 |---|---|---|---|---|---|
-| local:qwen-2.5-3b | 0.64 | 5890ms | 85 | $0.000000 | >= 0.59 |
-| kimi-k2p7-code | 0.78 | 7654ms | 616 | $0.003224 | >= 0.73 |
-| minimax-m3 | 0.78 | 5701ms | 622 | $0.000788 | >= 0.73 |
+| kimi-k2p7-code | 0.72 | 6667ms | 510 | $0.000000 | >= 0.67 |
+| local:qwen-2.5-3b | 0.60 | 7694ms | 109 | $0.000000 | >= 0.55 |
+| minimax-m3 | 0.62 | 6168ms | 595 | $0.000000 | >= 0.57 |
 
 ### Extraction
 
 | Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |
 |---|---|---|---|---|---|
-| local:qwen-2.5-3b | 1.00 | 1833ms | 22 | $0.000000 | >= 0.95 |
-| kimi-k2p7-code | 0.84 | 2563ms | 100 | $0.000556 | >= 0.79 |
-| minimax-m3 | 0.75 | 3385ms | 182 | $0.000266 | >= 0.70 |
+| kimi-k2p7-code | 0.46 | 2489ms | 112 | $0.000000 | DO NOT ROUTE |
+| local:qwen-2.5-3b | 0.96 | 1352ms | 15 | $0.000000 | >= 0.91 |
+| minimax-m3 | 0.64 | 2061ms | 204 | $0.000000 | >= 0.59 |
 
 ### General_qa
 
 | Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |
 |---|---|---|---|---|---|
-| local:qwen-2.5-3b | 0.79 | 3534ms | 50 | $0.000000 | >= 0.74 |
-| kimi-k2p7-code | 0.63 | 5023ms | 252 | $0.001324 | >= 0.58 |
-| minimax-m3 | 0.73 | 5474ms | 406 | $0.000527 | >= 0.68 |
+| kimi-k2p7-code | 0.71 | 4313ms | 255 | $0.000000 | >= 0.66 |
+| local:qwen-2.5-3b | 0.85 | 3342ms | 47 | $0.000000 | >= 0.80 |
+| minimax-m3 | 0.69 | 4590ms | 378 | $0.000000 | >= 0.64 |
 
 ### Math
 
 | Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |
 |---|---|---|---|---|---|
-| local:qwen-2.5-3b | 0.75 | 1755ms | 22 | $0.000000 | >= 0.70 |
-| kimi-k2p7-code | 0.85 | 3558ms | 78 | $0.000426 | >= 0.80 |
-| minimax-m3 | 0.85 | 3991ms | 208 | $0.000291 | >= 0.80 |
+| kimi-k2p7-code | 0.85 | 2059ms | 75 | $0.000000 | >= 0.80 |
+| local:qwen-2.5-3b | 0.75 | 1753ms | 22 | $0.000000 | >= 0.70 |
+| minimax-m3 | 0.85 | 2377ms | 206 | $0.000000 | >= 0.80 |
 
 ### Reasoning
 
 | Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |
 |---|---|---|---|---|---|
-| local:qwen-2.5-3b | 0.69 | 6570ms | 95 | $0.000000 | >= 0.64 |
-| kimi-k2p7-code | 0.86 | 8396ms | 710 | $0.003716 | >= 0.81 |
-| minimax-m3 | 0.86 | 7625ms | 804 | $0.001007 | >= 0.81 |
+| kimi-k2p7-code | 0.83 | 7871ms | 586 | $0.000000 | >= 0.78 |
+| local:qwen-2.5-3b | 0.70 | 6790ms | 96 | $0.000000 | >= 0.65 |
+| minimax-m3 | 0.87 | 6589ms | 807 | $0.000000 | >= 0.82 |
 
 ### Retrieval
 
 | Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |
 |---|---|---|---|---|---|
-| local:qwen-2.5-3b | 0.96 | 822ms | 10 | $0.000000 | >= 0.91 |
-| kimi-k2p7-code | 0.48 | 1153ms | 54 | $0.000297 | DO NOT ROUTE |
-| minimax-m3 | 0.64 | 2397ms | 70 | $0.000125 | >= 0.59 |
+| kimi-k2p7-code | 0.64 | 1429ms | 60 | $0.000000 | >= 0.59 |
+| local:qwen-2.5-3b | 0.96 | 925ms | 10 | $0.000000 | >= 0.91 |
+| minimax-m3 | 0.32 | 2165ms | 87 | $0.000000 | DO NOT ROUTE |
 
 ### Translation
 
 | Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |
 |---|---|---|---|---|---|
-| local:qwen-2.5-3b | 0.46 | 893ms | 10 | $0.000000 | DO NOT ROUTE |
-| kimi-k2p7-code | 0.30 | 5441ms | 185 | $0.000983 | DO NOT ROUTE |
-| minimax-m3 | 0.16 | 3604ms | 255 | $0.000347 | DO NOT ROUTE |
+| kimi-k2p7-code | 0.29 | 4025ms | 276 | $0.000000 | DO NOT ROUTE |
+| local:qwen-2.5-3b | 0.46 | 1109ms | 12 | $0.000000 | DO NOT ROUTE |
+| minimax-m3 | 0.17 | 2612ms | 282 | $0.000000 | DO NOT ROUTE |
 
 ## Failure Patterns
 
-- **kimi-k2p7-code**: fails on retrieval, translation
-- **minimax-m3**: fails on translation
+- **kimi-k2p7-code**: fails on extraction, translation
 - **local:qwen-2.5-3b**: fails on translation
+- **minimax-m3**: fails on retrieval, translation
