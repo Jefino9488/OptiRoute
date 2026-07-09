@@ -257,6 +257,7 @@ class FeatureExtractor:
         """Pick the dominant task type from detected feature flags.
 
         Priority order resolves ties (more specific types win).
+        Now uses intent-aware scoring to prevent keyword collisions.
         """
         # Score each type — higher = stronger signal.
         scores: dict[str, float] = {
@@ -270,6 +271,7 @@ class FeatureExtractor:
             "general_qa": 0.1,  # small default so it's the fallback
         }
 
+        # Base keyword matches
         if fv.contains_math:
             scores["math"] += 1.0
         if fv.contains_code:
@@ -277,17 +279,31 @@ class FeatureExtractor:
         if fv.requires_reasoning:
             scores["reasoning"] += 0.8
         if fv.is_creative:
-            scores["creative"] += 0.9
+            scores["creative"] += 1.0
         if fv.is_translation:
-            scores["translation"] += 0.95
+            scores["translation"] += 1.0
         if fv.json_required:
             scores["extraction"] += 0.6
         if fv.requires_retrieval:
             scores["retrieval"] += 0.7
 
-        # If both code *and* math, code wins (e.g. "implement fibonacci").
+        # Intent Resolution (resolving keyword collisions)
+        
+        # 1. Creative intent overrides incidental math (e.g. "haiku 5-7-5")
+        if fv.is_creative and fv.contains_math:
+            scores["creative"] += 1.5 
+            
+        # 2. Translation intent overrides general topics
+        if fv.is_translation:
+            scores["translation"] += 1.5
+            
+        # 3. Code intent with math (e.g. "implement fibonacci") -> Code wins
         if fv.contains_code and fv.contains_math:
-            scores["code"] += 0.2
+            scores["code"] += 0.5
+            
+        # 4. JSON intent boosts extraction unless code is dominant
+        if fv.json_required and not fv.contains_code:
+            scores["extraction"] += 0.5
 
         return max(scores, key=scores.get)  # type: ignore[arg-type]
 
