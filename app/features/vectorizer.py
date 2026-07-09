@@ -170,21 +170,38 @@ class TaskVectorGenerator:
 
     @staticmethod
     def _build_resource_vector(features: FeatureVector) -> ResourceVector:
-        """Estimate token / context requirements."""
+        """Estimate token / context requirements and calculate output budget."""
         input_tokens = features.input_length * 1.3
-        base_output = _OUTPUT_TOKENS.get(features.expected_output_length, 200.0)
+        
+        _OUTPUT_TOKENS = {
+            "short": 50.0,
+            "medium": 300.0,
+            "long": 800.0,
+        }
+        
+        base_output = _OUTPUT_TOKENS.get(features.expected_output_length, 300.0)
 
-        # Code and creative tasks typically produce longer outputs.
-        if features.contains_code:
-            base_output *= 1.5
+        # Format and Intent modifiers
         if features.is_creative:
-            base_output *= 1.3
+            base_output *= 1.5  # Essays/Stories need length
+        if features.contains_code:
+            base_output *= 1.4  # Code needs structure and comments
+        if features.task_type == "math":
+            base_output *= (1.0 + features.complexity)  # Complex math is step-by-step
+        if features.json_required:
+            base_output *= 1.2  # JSON formatting overhead
+        
+        # Complexity broadly scales the budget
+        base_output *= (0.8 + features.complexity * 0.4)
 
-        context_length = input_tokens + base_output
+        # Hard clamp limits to prevent pathological prompts from runaway cost
+        expected_output_tokens = round(min(max(base_output, 50.0), 2048.0), 1)
+        
+        context_length = input_tokens + expected_output_tokens
 
         return ResourceVector(
             expected_input_tokens=round(input_tokens, 1),
-            expected_output_tokens=round(base_output, 1),
+            expected_output_tokens=expected_output_tokens,
             expected_context_length=round(context_length, 1),
             complexity=features.complexity,
         )
