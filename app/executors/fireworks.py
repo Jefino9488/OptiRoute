@@ -80,7 +80,7 @@ class FireworksExecutor:
         full_model = settings.get_model_path(model_id)
 
         temp = temperature if temperature is not None else _TEMP_MAP.get(task_type, 0.4)
-        max_tok = max_tokens or 1024
+        max_tok = max_tokens or 4096
 
         messages: list[dict[str, str]] = []
         if system_prompt:
