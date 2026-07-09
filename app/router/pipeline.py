@@ -269,27 +269,56 @@ class RoutingPipeline:
             if current_model.startswith("local:"):
                 break
 
-            try:
-                result = await self._fireworks.execute(
-                    prompt=preprocessed.forwarded,
-                    model_id=current_model,
-                    task_type=features.task_type,
-                    system_prompt=fireworks_system_prompt,
-                )
-            except ValueError as exc:
-                # model_id not in ALLOWED_MODELS — treat as zero-confidence failure
-                # so the escalation loop can try the next model
-                logger.error(
-                    "pipeline.model_not_in_allowed_models",
-                    model=current_model,
-                    error=str(exc),
-                )
-                result = ExecutionResult(
-                    response="",
-                    model_used=current_model,
-                    confidence=0.0,
-                    raw_metadata={"error": str(exc)},
-                )
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    result = await self._fireworks.execute(
+                        prompt=preprocessed.forwarded,
+                        model_id=current_model,
+                        task_type=features.task_type,
+                        system_prompt=fireworks_system_prompt,
+                        max_tokens=resource_dict.get("output_tokens"),
+                    )
+                    
+                    result.cost = self._matrix.estimate_cost(
+                        current_model,
+                        result.tokens_input,
+                        result.tokens_output,
+                    ) or 0.0
+
+                    finish_reason = result.raw_metadata.get("finish_reason")
+                    is_empty = not result.response.strip()
+                    is_error = "[ERROR]" in result.response
+
+                    # Only retry on transient failures
+                    is_transient = is_empty or is_error or (finish_reason == "length")
+                    
+                    if is_transient and attempt < max_retries - 1:
+                        logger.warning(
+                            "pipeline.transient_failure_retry",
+                            model=current_model,
+                            attempt=attempt + 1,
+                            reason=finish_reason or ("empty" if is_empty else "error")
+                        )
+                        continue # Try same model again
+                        
+                    break # Success or non-transient, exit retry loop
+                    
+                except ValueError as exc:
+                    # model_id not in ALLOWED_MODELS — treat as zero-confidence failure
+                    # so the escalation loop can try the next model
+                    logger.error(
+                        "pipeline.model_not_in_allowed_models",
+                        model=current_model,
+                        error=str(exc),
+                    )
+                    result = ExecutionResult(
+                        response="",
+                        model_used=current_model,
+                        confidence=0.0,
+                        raw_metadata={"error": str(exc)},
+                    )
+                    break
 
             # Step 6: Validate confidence
             validation = self._validator.validate(

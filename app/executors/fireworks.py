@@ -30,17 +30,6 @@ _TEMP_MAP: dict[str, float] = {
     "general_qa": 0.4,
 }
 
-# Maximum output tokens per task type.
-_MAX_TOKENS_MAP: dict[str, int] = {
-    "code": 2048,
-    "math": 512,
-    "extraction": 1024,
-    "translation": 1024,
-    "reasoning": 1500,
-    "retrieval": 512,
-    "creative": 2048,
-    "general_qa": 1024,
-}
 
 
 class FireworksExecutor:
@@ -91,7 +80,7 @@ class FireworksExecutor:
         full_model = settings.get_model_path(model_id)
 
         temp = temperature if temperature is not None else _TEMP_MAP.get(task_type, 0.4)
-        max_tok = max_tokens or _MAX_TOKENS_MAP.get(task_type, 1024)
+        max_tok = max_tokens or 1024
 
         messages: list[dict[str, str]] = []
         if system_prompt:
@@ -161,16 +150,8 @@ class FireworksExecutor:
         tokens_in = usage.prompt_tokens if usage else 0
         tokens_out = usage.completion_tokens if usage else 0
 
-        # Compute cost.
-        matrix_path = settings.capability_matrix_path
-        # We import here to avoid circular imports at module level.
-        from app.router.capability_matrix import CapabilityMatrix
-
-        try:
-            matrix = CapabilityMatrix(matrix_path)
-            cost = matrix.estimate_cost(model_id, tokens_in, tokens_out) or 0.0
-        except Exception:
-            cost = 0.0
+        # Cost calculation is handled by the RoutingPipeline using its in-memory matrix.
+        cost = 0.0
 
         text = response.choices[0].message.content or "" if response.choices else ""
 
