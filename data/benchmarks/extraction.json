@@ -1,0 +1,32 @@
+[
+  {
+    "prompt": "Extract the names and ages from this text: 'John is 25 years old and his sister Mary is 22.'",
+    "expected_output": "John 25 Mary 22",
+    "category": "extraction",
+    "difficulty": "easy"
+  },
+  {
+    "prompt": "Extract all email addresses from: 'Contact us at support@example.com or sales@example.org.'",
+    "expected_output": "support@example.com sales@example.org",
+    "category": "extraction",
+    "difficulty": "easy"
+  },
+  {
+    "prompt": "Parse this log: '2023-01-01 12:00:00 INFO User login successful. IP: 192.168.1.1' and extract the timestamp, level, and IP.",
+    "expected_output": "2023-01-01 12:00:00 INFO 192.168.1.1",
+    "category": "extraction",
+    "difficulty": "medium"
+  },
+  {
+    "prompt": "Extract the main ingredients from: 'To make a classic Margherita pizza, you need San Marzano tomatoes, fresh mozzarella cheese, fresh basil, salt, and extra-virgin olive oil.'",
+    "expected_output": "tomatoes mozzarella basil salt olive oil",
+    "category": "extraction",
+    "difficulty": "medium"
+  },
+  {
+    "prompt": "Identify the company, product, and launch date: 'Apple announced the new Vision Pro headset on June 5, 2023 at WWDC.'",
+    "expected_output": "Apple Vision Pro June 5 2023",
+    "category": "extraction",
+    "difficulty": "medium"
+  }
+]

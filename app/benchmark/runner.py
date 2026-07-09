@@ -6,6 +6,7 @@ responses, latency, and token usage for capability matrix generation.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ import structlog
 
 from app.config import get_settings
 from app.executors.fireworks import FireworksExecutor
+from app.executors.local import LocalExecutor
 
 logger = structlog.get_logger(__name__)
 
@@ -58,7 +60,14 @@ class BenchmarkRunner:
 
     def __init__(self, benchmarks_dir: str = "data/benchmarks") -> None:
         self._benchmarks_dir = Path(benchmarks_dir)
-        self._executor = FireworksExecutor()
+        self._fireworks_executor = FireworksExecutor()
+        settings = get_settings()
+        self._local_executor = LocalExecutor(
+            model_path=settings.local_model_path,
+            context_length=settings.local_model_context_length,
+            n_threads=settings.local_model_threads,
+        )
+        self._local_loaded = False
 
     def load_dataset(self, category: str) -> list[BenchmarkPrompt]:
         """Load a benchmark dataset by category name.
@@ -137,11 +146,20 @@ class BenchmarkRunner:
                 category=bp.category,
                 progress=f"{i + 1}/{len(prompts)}",
             )
-            exec_result = await self._executor.execute(
-                prompt=bp.prompt,
-                model_id=model_id,
-                task_type=bp.category,
-            )
+            if model_id.startswith("local:"):
+                if not self._local_loaded:
+                    self._local_executor.load()
+                    self._local_loaded = True
+                exec_result = await self._local_executor.execute(
+                    prompt=bp.prompt,
+                    task_type=bp.category,
+                )
+            else:
+                exec_result = await self._fireworks_executor.execute(
+                    prompt=bp.prompt,
+                    model_id=model_id,
+                    task_type=bp.category,
+                )
             results.append(BenchmarkResult(
                 prompt=bp.prompt,
                 expected_output=bp.expected_output,
@@ -153,6 +171,11 @@ class BenchmarkRunner:
                 cost=exec_result.cost,
                 latency_ms=exec_result.latency_ms,
             ))
+            
+            # Small delay to prevent rate limits
+            if not model_id.startswith("local:"):
+                await asyncio.sleep(1.0)
+                
         return results
 
     async def run_all_models(
