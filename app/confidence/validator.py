@@ -135,7 +135,13 @@ class ConfidenceValidator:
             issues.append(f"Response much shorter than expected ({word_count} vs ~{expected} words)")
             penalties.append(0.2)
 
-        # 7. Repetition detection
+        # 7. Structural completion checks
+        completion_issues = self._check_structural_completion(response)
+        if completion_issues:
+            issues.extend(completion_issues)
+            penalties.extend([0.6] * len(completion_issues))  # Heavy penalty for incomplete output
+
+        # 8. Repetition detection
         if self._has_excessive_repetition(response):
             issues.append("Excessive repetition detected (possible degenerate output)")
             penalties.append(0.5)
@@ -169,3 +175,47 @@ class ConfidenceValidator:
             trigrams[trigram] = trigrams.get(trigram, 0) + 1
 
         return any(count > threshold for count in trigrams.values())
+
+    @staticmethod
+    def _check_structural_completion(text: str) -> list[str]:
+        """Check if the text is structurally complete.
+
+        Returns a list of issue descriptions if incomplete.
+        """
+        issues = []
+        
+        # 1. Check for unbalanced markdown code fences
+        fences = len(re.findall(r'^```', text, re.MULTILINE))
+        if fences % 2 != 0:
+            issues.append("Unbalanced markdown code fences")
+
+        # 2. Check for unbalanced brackets (only simple heuristics, as they might appear in code/strings)
+        # We'll just check if there's a gross mismatch to avoid false positives.
+        braces = text.count('{') - text.count('}')
+        brackets = text.count('[') - text.count(']')
+        parens = text.count('(') - text.count(')')
+        
+        if braces > 0:
+            issues.append(f"Unbalanced braces: {braces} unclosed '{{'")
+        if brackets > 0:
+            issues.append(f"Unbalanced brackets: {brackets} unclosed '['")
+        if parens > 0:
+            issues.append(f"Unbalanced parentheses: {parens} unclosed '('")
+
+        # 3. Check for obvious continuation patterns at the very end
+        trimmed = text.rstrip()
+        lower_trimmed = trimmed.lower()
+        continuation_patterns = [
+            "let's", "first", "here is the", "the answer is", "and", "or", "but", "so",
+            "for example", "such as", "as follows:"
+        ]
+        
+        if lower_trimmed.endswith(","):
+            issues.append("Response ends abruptly with a comma")
+        else:
+            for pattern in continuation_patterns:
+                if lower_trimmed.endswith(pattern):
+                    issues.append(f"Response ends with continuation pattern: '{pattern}'")
+                    break
+                    
+        return issues
