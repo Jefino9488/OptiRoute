@@ -8,5 +8,9 @@
   {"prompt": "Imagine you are an astronaut seeing Earth from space for the first time. Describe what you see and feel.", "expected_output": "", "category": "creative", "difficulty": "medium"},
   {"prompt": "Write a persuasive paragraph arguing why everyone should learn to code.", "expected_output": "", "category": "creative", "difficulty": "medium"},
   {"prompt": "Create a product description for a magical umbrella that controls the weather.", "expected_output": "", "category": "creative", "difficulty": "medium"},
-  {"prompt": "Write a brief monologue from the perspective of the last tree on Earth.", "expected_output": "", "category": "creative", "difficulty": "hard"}
+  {"prompt": "Write a brief monologue from the perspective of the last tree on Earth.", "expected_output": "", "category": "creative", "difficulty": "hard"},
+  {"prompt": "Write a 5-word sentence describing the sun.", "expected_output": "", "category": "creative", "difficulty": "easy"},
+  {"prompt": "Brainstorm three names for a pet dragon.", "expected_output": "", "category": "creative", "difficulty": "easy"},
+  {"prompt": "Write an epic 500-word fantasy saga detailing the fall of the Elven Kingdom, featuring three distinct character arcs and a plot twist ending.", "expected_output": "", "category": "creative", "difficulty": "hard"},
+  {"prompt": "Compose a sonnet in Shakespearean style (ABAB CDCD EFEF GG) about the concept of time travel.", "expected_output": "", "category": "creative", "difficulty": "hard"}
 ]
