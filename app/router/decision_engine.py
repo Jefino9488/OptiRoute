@@ -86,6 +86,7 @@ class DecisionEngine:
         resource_vector: dict[str, Any],
         risk_vector: dict[str, Any],
         required_accuracy: float = 0.8,
+        prompt: str = "",
     ) -> RoutingDecision:
         """Run the 7-step routing algorithm and return a decision.
 
@@ -106,7 +107,7 @@ class DecisionEngine:
         RoutingDecision
         """
         # Step 1: Deterministic bypass
-        deterministic = self._check_deterministic(task_vector, resource_vector, risk_vector)
+        deterministic = self._check_deterministic(task_vector, resource_vector, risk_vector, prompt)
         if deterministic is not None:
             logger.info("decision_engine.deterministic_bypass", tool=deterministic)
             return RoutingDecision(
@@ -235,19 +236,33 @@ class DecisionEngine:
         task_vector: dict[str, float],
         resource_vector: dict[str, Any],
         risk_vector: dict[str, Any],
+        prompt: str = "",
     ) -> str | None:
         """Return a deterministic tool name if the task qualifies, else None.
 
-        Conditions:
-        * Simple math: ``task_vector['math'] > 0.9`` **and**
-          ``resource_vector['complexity'] < 0.3``.
-        * JSON extraction: ``risk_vector['needs_json']`` is truthy **and**
-          ``task_vector['extraction'] > 0.8``.
+        Uses direct tool probing — tools know their own patterns better than
+        the approximate feature vector weights. Falls back to vector thresholds
+        when no prompt is provided (e.g. during tests).
+
+        Priority order:
+          1. CharCounterTool  — exact character/substring counting
+          2. CalculatorTool   — arithmetic expressions
+          3. JsonParserTool   — JSON extraction tasks
         """
-        math_weight = task_vector.get("math", 0.0)
-        complexity = resource_vector.get("complexity", 1.0)
-        if math_weight > 0.9 and complexity < 0.3:
-            return "deterministic:calculator"
+        from app.executors.tools import CharCounterTool, CalculatorTool
+
+        if prompt:
+            # Direct probe — most reliable
+            if CharCounterTool().can_handle(prompt):
+                return "deterministic:counter"
+            if CalculatorTool().can_handle(prompt):
+                return "deterministic:calculator"
+        else:
+            # Fallback for callers that don't pass the raw prompt
+            math_weight = task_vector.get("math", 0.0)
+            complexity = resource_vector.get("complexity", 1.0)
+            if math_weight > 0.9 and complexity < 0.3:
+                return "deterministic:calculator"
 
         if risk_vector.get("needs_json") and task_vector.get("extraction", 0.0) > 0.8:
             return "deterministic:json"

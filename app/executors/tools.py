@@ -20,6 +20,66 @@ from app.executors.base import ExecutionResult
 logger = structlog.get_logger(__name__)
 
 
+class CharCounterTool:
+    """Exact character or substring counting — always correct, $0 cost.
+
+    Handles prompts like:
+      - "Count exactly how many times the letter 'e' appears in '...'"
+      - "How many times does 'the' appear in '...'"
+      - "How many X are in '...'"
+    """
+
+    _PATTERN = re.compile(
+        r"(?:count\s+(?:exactly\s+)?(?:how\s+many\s+times\s+)?(?:the\s+)?(?:letter\s+|character\s+|word\s+)?['\"]?(\w+)['\"]?\s+(?:appears?|occurs?|is\s+(?:in|there))"
+        r"|how\s+many\s+times\s+(?:does\s+)?['\"]?(\w+)['\"]?\s+(?:appears?|occurs?)"
+        r"|how\s+many\s+['\"]?(\w+)['\"]?\s+(?:are\s+(?:there\s+)?in|appear))",
+        re.IGNORECASE,
+    )
+    # Single-quoted and double-quoted strings in the prompt
+    _BODY = re.compile(r"""(?:'([^']+)'|\"([^\"]+)\")""")
+
+    def can_handle(self, prompt: str) -> bool:
+        """Return True if the prompt is an exact-count request with quoted body."""
+        if not self._PATTERN.search(prompt):
+            return False
+        # _BODY has two groups (single-quoted, double-quoted); flatten and filter
+        bodies = [
+            g for pair in self._BODY.findall(prompt) for g in pair if g and len(g) >= 10
+        ]
+        return len(bodies) >= 1
+
+    def execute(self, prompt: str) -> ExecutionResult:
+        """Count occurrences of the target in the quoted body text."""
+        start = time.perf_counter()
+        m = self._PATTERN.search(prompt)
+        target = next((g for g in (m.groups() if m else []) if g), None)
+        # Body = longest quoted segment (exclude the target itself)
+        # _BODY has two groups; flatten tuples from findall
+        all_pairs = self._BODY.findall(prompt)
+        all_quoted = [g for pair in all_pairs for g in pair if g]
+        body = max(
+            (b for b in all_quoted if b != target and len(b) >= 10),
+            key=len,
+            default=None,
+        )
+        if not target or not body:
+            return ExecutionResult(
+                response="Cannot parse counting request — target or body not found.",
+                model_used="deterministic:counter",
+                confidence=0.0,
+            )
+        count = body.lower().count(target.lower())
+        elapsed = (time.perf_counter() - start) * 1000
+        logger.info("counter.result", target=target, count=count)
+        return ExecutionResult(
+            response=str(count),
+            model_used="deterministic:counter",
+            cost=0.0,
+            latency_ms=round(elapsed, 3),
+            confidence=1.0,
+        )
+
+
 class CalculatorTool:
     """Safely evaluate simple arithmetic expressions.
 
@@ -154,6 +214,7 @@ class DeterministicExecutor:
     """
 
     def __init__(self) -> None:
+        self._counter = CharCounterTool()
         self._calculator = CalculatorTool()
         self._json_parser = JsonParserTool()
         self._regex = RegexTool()
@@ -173,6 +234,12 @@ class DeterministicExecutor:
         ExecutionResult | None
             Result if a tool handled it, else ``None``.
         """
+        # Exact character/substring counting — checked first (higher precision)
+        if tool_hint == "deterministic:counter" or self._counter.can_handle(prompt):
+            result = self._counter.execute(prompt)
+            if result.confidence > 0.5:
+                return result
+
         if tool_hint == "deterministic:calculator" or self._calculator.can_handle(prompt):
             result = self._calculator.execute(prompt)
             if result.confidence > 0.5:

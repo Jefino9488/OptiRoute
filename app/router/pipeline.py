@@ -24,6 +24,7 @@ from app.executors.fireworks import FireworksExecutor
 from app.executors.tools import DeterministicExecutor
 from app.features.extractor import FeatureExtractor
 from app.features.normalizer import RequestNormalizer
+from app.features.preprocessor import PromptPreprocessor
 from app.features.vectorizer import TaskVectorGenerator
 from app.metrics.collector import MetricsCollector, RequestMetric
 from app.router.capability_matrix import CapabilityMatrix
@@ -94,6 +95,7 @@ class RoutingPipeline:
         self._cache = CacheManager()
         self._validator = ConfidenceValidator()
         self._metrics = MetricsCollector()
+        self._preprocessor = PromptPreprocessor()
 
     # ------------------------------------------------------------------
     # Public API
@@ -216,6 +218,21 @@ class RoutingPipeline:
                     best_result = None  # will be set by Fireworks loop below
 
         # 5c: Fireworks execution (with escalation loop)
+        # Preprocess prompt once before the loop: compress tokens + inject
+        # anti-hallucination system prompt lines (false_memory, stale_knowledge, injection).
+        # Local model execution is never preprocessed — it always received the original.
+        preprocessed = await self._preprocessor.process(
+            prompt=prompt,
+            local_executor=self._local,
+        )
+        if preprocessed.risk_flags:
+            logger.info(
+                "pipeline.preprocessor_flags",
+                flags=list(preprocessed.risk_flags),
+                token_savings=preprocessed.token_savings,
+            )
+        fireworks_system_prompt = "\n".join(preprocessed.system_addons) or None
+
         current_model = decision.model_selected
         while best_result is None or (
             best_result.confidence < self._policy.confidence_threshold
@@ -231,7 +248,15 @@ class RoutingPipeline:
                         resource_dict.get("output_tokens", 0),
                     )
                 # Filter out local models from Fireworks escalation list
-                eligible = [m for m in eligible if not m["model_id"].startswith("local:")]
+                # Also restrict to models actually in ALLOWED_MODELS —
+                # prevents ValueError from get_model_path() if the matrix
+                # has models the harness hasn't permitted for this run.
+                allowed = set(get_settings().allowed_models.keys())
+                eligible = [
+                    m for m in eligible
+                    if not m["model_id"].startswith("local:")
+                    and m["model_id"] in allowed
+                ]
                 eligible.sort(key=lambda m: m.get("estimated_cost", float("inf")))
                 next_model = self._policy.get_next_model(
                     current_model, eligible, escalation_depth,
@@ -252,11 +277,27 @@ class RoutingPipeline:
             if current_model.startswith("deterministic:") or current_model.startswith("local:"):
                 break
 
-            result = await self._fireworks.execute(
-                prompt=prompt,
-                model_id=current_model,
-                task_type=features.task_type,
-            )
+            try:
+                result = await self._fireworks.execute(
+                    prompt=preprocessed.forwarded,
+                    model_id=current_model,
+                    task_type=features.task_type,
+                    system_prompt=fireworks_system_prompt,
+                )
+            except ValueError as exc:
+                # model_id not in ALLOWED_MODELS — treat as zero-confidence failure
+                # so the escalation loop can try the next model
+                logger.error(
+                    "pipeline.model_not_in_allowed_models",
+                    model=current_model,
+                    error=str(exc),
+                )
+                result = ExecutionResult(
+                    response="",
+                    model_used=current_model,
+                    confidence=0.0,
+                    raw_metadata={"error": str(exc)},
+                )
 
             # Step 6: Validate confidence
             validation = self._validator.validate(
@@ -357,8 +398,8 @@ class RoutingPipeline:
                 reasoning=f"Model forced by caller: {force_model}",
             )
 
-        # Level 2: Deterministic bypass (pure math / JSON parsing)
-        det = self._engine._check_deterministic(task_dict, resource_dict, risk_dict)
+        # Level 2: Deterministic bypass (pure math / JSON parsing / char counting)
+        det = self._engine._check_deterministic(task_dict, resource_dict, risk_dict, prompt)
         if det:
             return RoutingDecision(
                 model_selected=det,
@@ -401,6 +442,7 @@ class RoutingPipeline:
             resource_vector=resource_dict,
             risk_vector=risk_dict,
             required_accuracy=required_accuracy,
+            prompt=prompt,
         )
 
     async def _try_local_execute(

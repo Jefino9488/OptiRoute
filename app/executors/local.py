@@ -66,16 +66,18 @@ _ROUTING_SYSTEM = """\
 You are an AI routing agent. Select the cheapest model that can correctly handle the task.
 
 Models:
-- local: Factual questions, definitions, sentiment analysis, named entity recognition (NER), \
-text summarization, simple translations, basic arithmetic. FREE — always prefer when sufficient.
+- local: Factual definitions, sentiment analysis, named entity recognition (NER), \
+text summarization, simple translation. FREE — use ONLY when you are confident the answer \
+is a well-known fact or a simple single-step classification.
 - kimi-k2p7-code: Code writing, code debugging, programming tasks ONLY. EXPENSIVE.
-- minimax-m3: Complex multi-step math word problems, hard logic puzzles, tasks requiring deep \
-multi-step reasoning. EXPENSIVE.
+- minimax-m3: Multi-step reasoning, sorting/filtering/ordering lists, arithmetic on large numbers, \
+current events or recent facts you may not know reliably, any task with multiple transformation \
+steps, or anything where you are not fully confident. EXPENSIVE.
 
 Rules:
-1. Default to 'local' — it is FREE and covers most tasks.
+1. Use 'local' only for simple factual lookups and single-step classification — NOT for counting, sorting, reordering, or current events.
 2. Use 'kimi-k2p7-code' ONLY for coding tasks (writing or debugging code).
-3. Use 'minimax-m3' ONLY for genuinely complex reasoning or multi-step math word problems.
+3. Use 'minimax-m3' for everything else, including multi-step manipulation and when in doubt.
 
 Respond with exactly one word: local, kimi-k2p7-code, or minimax-m3."""
 
@@ -94,10 +96,6 @@ _ROUTING_EXAMPLES: list[tuple[str, str]] = [
     # Text summarisation → local
     ("Summarize this paragraph in one sentence:", "local"),
     ("Condense the following text to two sentences:", "local"),
-    # Simple math → local
-    ("What is 15 * 23?", "local"),
-    ("What is 17% of 400?", "local"),
-    ("What is the square root of 144?", "local"),
     # Code debugging → kimi
     ("This function has a bug: def get_max(nums): return nums[0]. Find and fix it.", "kimi-k2p7-code"),
     ("Debug this Python code: for i in range(10) print(i)", "kimi-k2p7-code"),
@@ -111,6 +109,17 @@ _ROUTING_EXAMPLES: list[tuple[str, str]] = [
     # Logical/deductive reasoning → minimax
     ("Three friends each own a different pet. Sam doesn't own the bird. Jo owns the dog. Who owns the cat?", "minimax-m3"),
     ("If all A are B, and some B are C, what can we conclude about A and C?", "minimax-m3"),
+    # Multi-step list manipulation → minimax (NOT local)
+    ("List the numbers from 1 to 50, but skip every multiple of 3, and reverse the final list.", "minimax-m3"),
+    ("Sort these words alphabetically, then reverse the order: banana, apple, kiwi, fig.", "minimax-m3"),
+    ("Filter the even numbers from this list, then sort them descending: 7, 2, 9, 4, 1, 6.", "minimax-m3"),
+    # Current events / recent facts → minimax (local training data may be stale)
+    ("Who won the most recent FIFA World Cup?", "minimax-m3"),
+    ("What is the latest stable version of Python?", "minimax-m3"),
+    ("Who is the current Formula 1 World Champion?", "minimax-m3"),
+    # Exact character counting → local (intercepted by CharCounterTool before LLM execution)
+    ("Count how many times the letter 'a' appears in 'banana'.", "local"),
+    ("How many times does 'the' appear in the sentence 'the cat sat on the mat'?", "local"),
 ]
 
 
