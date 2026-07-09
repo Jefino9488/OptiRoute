@@ -6,6 +6,7 @@ the hood via ``openai.AsyncOpenAI``.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -106,37 +107,52 @@ class FireworksExecutor:
         )
 
         start = time.perf_counter()
-        try:
-            response = await self._client.chat.completions.create(
-                model=full_model,
-                messages=messages,
-                temperature=temp,
-                max_tokens=max_tok,
-            )
-        except RateLimitError as exc:
-            logger.error("fireworks.rate_limit", model=model_id, error=str(exc))
-            return ExecutionResult(
-                response="[ERROR] Rate limit exceeded. Please retry.",
-                model_used=model_id,
-                confidence=0.0,
-                raw_metadata={"error": str(exc)},
-            )
-        except APITimeoutError as exc:
-            logger.error("fireworks.timeout", model=model_id, error=str(exc))
-            return ExecutionResult(
-                response="[ERROR] Request timed out.",
-                model_used=model_id,
-                confidence=0.0,
-                raw_metadata={"error": str(exc)},
-            )
-        except APIError as exc:
-            logger.error("fireworks.api_error", model=model_id, error=str(exc))
-            return ExecutionResult(
-                response=f"[ERROR] API error: {exc}",
-                model_used=model_id,
-                confidence=0.0,
-                raw_metadata={"error": str(exc)},
-            )
+        
+        max_retries = 5
+        base_delay = 2.0
+        
+        for attempt in range(max_retries):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=full_model,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=max_tok,
+                )
+                break  # Success
+            except RateLimitError as exc:
+                if attempt == max_retries - 1:
+                    logger.error("fireworks.rate_limit_exhausted", model=model_id, error=str(exc))
+                    return ExecutionResult(
+                        response="[ERROR] Rate limit exceeded after retries.",
+                        model_used=model_id,
+                        confidence=0.0,
+                        raw_metadata={"error": str(exc)},
+                    )
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "fireworks.rate_limit_retry", 
+                    model=model_id, 
+                    attempt=attempt + 1, 
+                    delay=delay
+                )
+                await asyncio.sleep(delay)
+            except APITimeoutError as exc:
+                logger.error("fireworks.timeout", model=model_id, error=str(exc))
+                return ExecutionResult(
+                    response="[ERROR] Request timed out.",
+                    model_used=model_id,
+                    confidence=0.0,
+                    raw_metadata={"error": str(exc)},
+                )
+            except APIError as exc:
+                logger.error("fireworks.api_error", model=model_id, error=str(exc))
+                return ExecutionResult(
+                    response=f"[ERROR] API error: {exc}",
+                    model_used=model_id,
+                    confidence=0.0,
+                    raw_metadata={"error": str(exc)},
+                )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
