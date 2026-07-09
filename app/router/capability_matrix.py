@@ -89,7 +89,7 @@ class CapabilityMatrix:
         Returns
         -------
         dict | None
-            Model entry including capabilities, costs, fails_on, etc.
+            Model entry including capabilities, costs, samples, etc.
         """
         entry = self._data.get(model_id)
         if entry is None:
@@ -100,24 +100,6 @@ class CapabilityMatrix:
         """Return a list of all model IDs in the matrix."""
         return list(self._data.keys())
 
-    def get_failure_models(self, task_type: str) -> list[str]:
-        """Return model IDs whose ``fails_on`` list includes *task_type*.
-
-        Parameters
-        ----------
-        task_type : str
-            A task dimension name (e.g. ``"creative"``).
-
-        Returns
-        -------
-        list[str]
-            Model IDs known to fail on the given task type.
-        """
-        return [
-            model_id
-            for model_id, entry in self._data.items()
-            if task_type in entry.get("fails_on", [])
-        ]
 
     def get_capable_models(
         self,
@@ -171,11 +153,11 @@ class CapabilityMatrix:
         self,
         model_id: str,
         capabilities: dict[str, float],
-        fails_on: list[str],
+        samples: dict[str, int],
     ) -> None:
         """Update (or create) a model entry with new capability scores.
 
-        Only the ``capabilities`` and ``fails_on`` fields are overwritten; cost
+        Only the ``capabilities`` and ``samples`` fields are overwritten; cost
         and context fields are preserved if the model already exists.
 
         Parameters
@@ -184,18 +166,18 @@ class CapabilityMatrix:
             Short model identifier.
         capabilities : dict[str, float]
             Per-dimension accuracy scores.
-        fails_on : list[str]
-            Task dimensions where the model is known to fail.
+        samples : dict[str, int]
+            Number of benchmark samples per dimension.
         """
         existing = self._data.get(model_id, {})
         existing["capabilities"] = capabilities
-        existing["fails_on"] = fails_on
+        existing["samples"] = samples
         self._data[model_id] = existing
         logger.info(
             "capability_matrix.model_updated",
             model_id=model_id,
             dims=list(capabilities.keys()),
-            fails_on=fails_on,
+            samples=samples,
         )
 
     # ------------------------------------------------------------------

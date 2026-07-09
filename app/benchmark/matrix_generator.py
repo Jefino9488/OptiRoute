@@ -54,9 +54,14 @@ class CapabilityMatrixGenerator:
         """
         # Score all results
         scored_results: list[BenchmarkResult] = []
+        sample_counts: dict[str, dict[str, int]] = {}
         for model_id, results in all_results.items():
             self._evaluator.evaluate(results)
             scored_results.extend(results)
+            
+            sample_counts[model_id] = {}
+            for r in results:
+                sample_counts[model_id][r.category] = sample_counts[model_id].get(r.category, 0) + 1
 
         # Aggregate scores
         aggregated = self._evaluator.aggregate_scores(scored_results)
@@ -94,11 +99,7 @@ class CapabilityMatrixGenerator:
                 else:
                     capabilities[dim] = 0.5  # Default
 
-            # Identify failure patterns
-            fails_on: list[str] = [
-                dim for dim, score in capabilities.items()
-                if score < _FAILURE_THRESHOLD
-            ]
+            samples: dict[str, int] = sample_counts.get(model_id, {})
 
             updated[model_id] = {
                 "capabilities": capabilities,
@@ -106,7 +107,7 @@ class CapabilityMatrixGenerator:
                 "cost_per_1k_output": existing.get("cost_per_1k_output", 0.0004),
                 "avg_output_multiplier": existing.get("avg_output_multiplier", 1.0),
                 "max_context": existing.get("max_context", 256000),
-                "fails_on": fails_on,
+                "samples": samples,
                 "avg_latency_ms": self._compute_avg_latency(
                     all_results.get(model_id, [])
                 ),
@@ -196,15 +197,6 @@ class CapabilityMatrixGenerator:
                     
                 lines.append(f"| {model_id} | {accuracy:.2f} | {avg_latency:.0f}ms | {avg_out_tokens:.0f} | ${avg_cost:.6f} | {rec} |")
             lines.append("")
-
-        # Failure patterns
-        lines.append("## Failure Patterns\n")
-        for model_id, scores in sorted(aggregated.items()):
-            failures = [c for c, s in scores.items() if s < _FAILURE_THRESHOLD]
-            if failures:
-                lines.append(f"- **{model_id}**: fails on {', '.join(failures)}")
-            else:
-                lines.append(f"- **{model_id}**: no critical failures")
 
         lines.append("")
 

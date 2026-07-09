@@ -102,16 +102,12 @@ class DecisionEngine:
         -------
         RoutingDecision
         """
-        # Step 1: Identify dominant task type and filter out failure models
         dominant_task = self._get_dominant_task(task_vector)
-        failure_models = self._matrix.get_failure_models(dominant_task)
-        all_models = self._matrix.get_all_models()
-        candidates = [m for m in all_models if m not in failure_models]
+        candidates = self._matrix.get_all_models()
 
         logger.info(
             "decision_engine.filtering",
             dominant_task=dominant_task,
-            excluded=failure_models,
             candidates=candidates,
         )
 
@@ -165,7 +161,6 @@ class DecisionEngine:
                 winner=winner,
                 dominant_task=dominant_task,
                 required_accuracy=required_accuracy,
-                excluded=failure_models,
                 alternatives=alternatives,
             )
             decision = RoutingDecision(
@@ -251,7 +246,6 @@ class DecisionEngine:
         winner: dict[str, Any],
         dominant_task: str,
         required_accuracy: float,
-        excluded: list[str],
         alternatives: list[dict[str, Any]],
     ) -> str:
         """Build a human-readable routing explanation string."""
@@ -261,10 +255,6 @@ class DecisionEngine:
             f"({winner.get('predicted_accuracy', 0):.2f} >= {required_accuracy:.2f}) "
             f"at lowest cost (${winner.get('estimated_cost', 0):.8f}).",
         ]
-        if excluded:
-            parts.append(
-                f"Excluded {', '.join(excluded)} (fails_on includes {dominant_task})."
-            )
         if alternatives:
             alt_strs = [
                 f"{a['model']} (${a['cost']:.8f})" for a in alternatives[:3]

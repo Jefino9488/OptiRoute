@@ -216,7 +216,10 @@ class ModelInfo(BaseModel):
         ge=0,
         description="Maximum context window in tokens",
     )
-    fails_on: list[str] = Field(
-        default_factory=list,
-        description="Task categories this model is known to fail on",
+    avg_output_multiplier: float = Field(
+        1.0, description="Average output token multiplier vs input."
+    )
+    samples: dict[str, int] = Field(
+        default_factory=dict,
+        description="Optional tracking of how many samples were tested per task type.",
     )
