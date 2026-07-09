@@ -68,6 +68,9 @@ class BenchmarkRunner:
             n_threads=settings.local_model_threads,
         )
         self._local_loaded = False
+        
+        from app.router.capability_matrix import CapabilityMatrix
+        self._matrix = CapabilityMatrix(settings.capability_matrix_path)
 
     def load_dataset(self, category: str) -> list[BenchmarkPrompt]:
         """Load a benchmark dataset by category name.
@@ -160,6 +163,11 @@ class BenchmarkRunner:
                     model_id=model_id,
                     task_type=bp.category,
                 )
+                exec_result.cost = self._matrix.estimate_cost(
+                    model_id, 
+                    exec_result.tokens_input, 
+                    exec_result.tokens_output
+                ) or 0.0
             results.append(BenchmarkResult(
                 prompt=bp.prompt,
                 expected_output=bp.expected_output,
