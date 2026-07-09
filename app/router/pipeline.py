@@ -279,7 +279,10 @@ class RoutingPipeline:
                 break
 
             max_retries = 2
-            current_max_tokens = resource_dict.get("output_tokens", 1024)
+            # Thinking models (Minimax/Kimi) need huge output windows for their reasoning traces.
+            # We use resource_dict['output_tokens'] for cost estimation, but we give the API 
+            # much more headroom to prevent wasteful truncation retries.
+            current_max_tokens = max(resource_dict.get("output_tokens", 1024), 8192)
             for attempt in range(max_retries):
                 try:
                     result = await self._fireworks.execute(
@@ -495,6 +498,19 @@ class RoutingPipeline:
                 "pipeline.local_context_overflow",
                 est_tokens=est_tokens,
                 max_context=max_ctx,
+                model=model_id,
+            )
+            return None  # Caller will fall through to Fireworks
+
+        # Output generation limit pre-check
+        # Local model is slow on CPU, so we hard-cap generation to 512 tokens.
+        # If the task requires more than 512 output tokens, skip local execution.
+        est_output = resource_dict.get("output_tokens", 512)
+        if est_output > 512:
+            logger.info(
+                "pipeline.local_output_overflow",
+                est_output=est_output,
+                max_allowed=512,
                 model=model_id,
             )
             return None  # Caller will fall through to Fireworks
