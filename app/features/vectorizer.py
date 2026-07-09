@@ -60,7 +60,6 @@ class RiskVector:
     """Boolean risk flags driving model filtering and validation."""
 
     needs_json: bool = False
-    needs_deterministic: bool = False
     needs_high_accuracy: bool = False
     strict_formatting: bool = False
 
@@ -195,7 +194,6 @@ class TaskVectorGenerator:
         """Derive boolean risk flags from feature booleans."""
         return RiskVector(
             needs_json=features.json_required,
-            needs_deterministic=features.contains_math or features.json_required,
             needs_high_accuracy=features.contains_code or features.contains_math,
             strict_formatting=features.json_required,
         )
