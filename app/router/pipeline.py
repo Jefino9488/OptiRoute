@@ -21,7 +21,6 @@ from app.confidence.validator import ConfidenceValidator
 from app.config import get_settings
 from app.executors.base import ExecutionResult
 from app.executors.fireworks import FireworksExecutor
-from app.executors.tools import DeterministicExecutor
 from app.features.extractor import FeatureExtractor
 from app.features.normalizer import RequestNormalizer
 from app.features.preprocessor import PromptPreprocessor
@@ -62,7 +61,6 @@ class RoutingPipeline:
 
         # Execution backends
         self._fireworks = FireworksExecutor()
-        self._deterministic = DeterministicExecutor()
 
         # Local model (optional — gracefully absent if GGUF missing)
         self._local = None
@@ -183,13 +181,7 @@ class RoutingPipeline:
         escalated = False
         best_result: ExecutionResult | None = None
 
-        # 5a: Deterministic tools
-        if decision.is_deterministic:
-            det_result = self._deterministic.try_execute(prompt, decision.model_selected)
-            if det_result and det_result.confidence > 0.5:
-                best_result = det_result
-
-        # 5b: Local model dispatch (when model_selected starts with "local:")
+        # 5a: Local model dispatch (when model_selected starts with "local:")
         if best_result is None and decision.model_selected.startswith("local:") and self._local:
             local_result = await self._try_local_execute(
                 prompt=prompt,
@@ -217,7 +209,7 @@ class RoutingPipeline:
                     )
                     best_result = None  # will be set by Fireworks loop below
 
-        # 5c: Fireworks execution (with escalation loop)
+        # 5b: Fireworks execution (with escalation loop)
         # Preprocess prompt once before the loop: compress tokens + inject
         # anti-hallucination system prompt lines (false_memory, stale_knowledge, injection).
         # Local model execution is never preprocessed — it always received the original.
@@ -273,8 +265,8 @@ class RoutingPipeline:
                     depth=escalation_depth,
                 )
 
-            # Skip deterministic and local models in Fireworks loop
-            if current_model.startswith("deterministic:") or current_model.startswith("local:"):
+            # Skip local models in Fireworks loop
+            if current_model.startswith("local:"):
                 break
 
             try:
@@ -380,12 +372,11 @@ class RoutingPipeline:
         required_accuracy: float,
         force_model: str | None,
     ) -> RoutingDecision:
-        """Select the model using a 4-level priority chain.
+        """Select the model using a 3-level priority chain.
 
         1. force_model override (testing / debugging)
-        2. Deterministic tool bypass ($0, instant)
-        3. Local LLM router (Qwen2.5-3B, max_tokens=15)
-        4. Heuristic decision engine (fallback — always works)
+        2. Local LLM router (Qwen2.5-3B, max_tokens=15)
+        3. Heuristic decision engine (fallback — always works)
         """
         settings = get_settings()
 
@@ -398,18 +389,7 @@ class RoutingPipeline:
                 reasoning=f"Model forced by caller: {force_model}",
             )
 
-        # Level 2: Deterministic bypass (pure math / JSON parsing / char counting)
-        det = self._engine._check_deterministic(task_dict, resource_dict, risk_dict, prompt)
-        if det:
-            return RoutingDecision(
-                model_selected=det,
-                estimated_cost=0.0,
-                predicted_accuracy=1.0,
-                reasoning=f"Deterministic tool bypass: {det} ($0 cost, instant)",
-                is_deterministic=True,
-            )
-
-        # Level 3: Local LLM router
+        # Level 2: Local LLM router
         if self._local and settings.local_router_enabled:
             routed = await self._local.route(prompt)
             if routed is not None:
@@ -435,14 +415,13 @@ class RoutingPipeline:
                         reasoning=f"Local LLM router → {routed}",
                     )
 
-        # Level 4: Heuristic decision engine (fallback)
+        # Level 3: Heuristic decision engine (fallback)
         logger.info("pipeline.using_heuristic_engine")
         return self._engine.select_model(
             task_vector=task_dict,
             resource_vector=resource_dict,
             risk_vector=risk_dict,
             required_accuracy=required_accuracy,
-            prompt=prompt,
         )
 
     async def _try_local_execute(

@@ -3,14 +3,13 @@
 Answers: "Among the allowed Fireworks models, which one is the cheapest that
 can still solve this task accurately?"
 
-The algorithm proceeds in seven steps:
-1. Deterministic bypass (math/json tools at $0 cost)
-2. Failure filtering (exclude models known to fail on dominant task)
-3. Weighted-accuracy scoring per candidate
-4. Accuracy threshold filtering
-5. Cost estimation (with Kimi's 1.3× output multiplier)
-6. Sort by cost, pick cheapest
-7. Fallback to frontier (minimax-m3) if nothing qualifies
+The algorithm proceeds in six steps:
+1. Identify dominant task type and filter out failure models
+2. Weighted-accuracy scoring per candidate
+3. Accuracy threshold filtering
+4. Cost estimation (with Kimi's 1.3× output multiplier)
+5. Sort by cost, pick cheapest
+6. Fallback to frontier (minimax-m3) if nothing qualifies
 """
 
 from __future__ import annotations
@@ -48,8 +47,6 @@ class RoutingDecision:
         Human-readable explanation of the routing choice.
     alternatives_considered : list[dict]
         Other eligible models that were considered, sorted by cost.
-    is_deterministic : bool
-        ``True`` when a deterministic tool handles the request ($0 cost).
     """
 
     model_selected: str
@@ -57,7 +54,6 @@ class RoutingDecision:
     predicted_accuracy: float
     reasoning: str
     alternatives_considered: list[dict[str, Any]] = field(default_factory=list)
-    is_deterministic: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the decision to a plain dict."""
@@ -86,7 +82,6 @@ class DecisionEngine:
         resource_vector: dict[str, Any],
         risk_vector: dict[str, Any],
         required_accuracy: float = 0.8,
-        prompt: str = "",
     ) -> RoutingDecision:
         """Run the 7-step routing algorithm and return a decision.
 
@@ -106,19 +101,7 @@ class DecisionEngine:
         -------
         RoutingDecision
         """
-        # Step 1: Deterministic bypass
-        deterministic = self._check_deterministic(task_vector, resource_vector, risk_vector, prompt)
-        if deterministic is not None:
-            logger.info("decision_engine.deterministic_bypass", tool=deterministic)
-            return RoutingDecision(
-                model_selected=deterministic,
-                estimated_cost=0.0,
-                predicted_accuracy=1.0,
-                reasoning=f"Task handled by deterministic tool ({deterministic}). No LLM needed — $0 cost.",
-                is_deterministic=True,
-            )
-
-        # Step 2: Identify dominant task type and filter out failure models
+        # Step 1: Identify dominant task type and filter out failure models
         dominant_task = self._get_dominant_task(task_vector)
         failure_models = self._matrix.get_failure_models(dominant_task)
         all_models = self._matrix.get_all_models()
@@ -131,7 +114,7 @@ class DecisionEngine:
             candidates=candidates,
         )
 
-        # Step 3 + 4: Compute weighted accuracy and filter by threshold
+        # Step 2 + 3: Compute weighted accuracy and filter by threshold
         eligible: list[dict[str, Any]] = []
         for model_id in candidates:
             entry = self._matrix.get_model_capabilities(model_id)
@@ -151,7 +134,7 @@ class DecisionEngine:
                     }
                 )
 
-        # Step 5: Estimate cost for each eligible model
+        # Step 4: Estimate cost for each eligible model
         input_tokens = resource_vector.get("input_tokens", _DEFAULT_INPUT_TOKENS)
         output_tokens = resource_vector.get("output_tokens", _DEFAULT_OUTPUT_TOKENS)
 
@@ -164,7 +147,7 @@ class DecisionEngine:
                 / 1000
             )
 
-        # Step 6: Sort by cost ascending, pick cheapest
+        # Step 5: Sort by cost ascending, pick cheapest
         eligible.sort(key=lambda m: m["estimated_cost"])
 
         if eligible:
@@ -199,7 +182,7 @@ class DecisionEngine:
             )
             return decision
 
-        # Step 7: Fallback — no model met the threshold
+        # Step 6: Fallback — no model met the threshold
         logger.warning(
             "decision_engine.fallback",
             required_accuracy=required_accuracy,
@@ -230,44 +213,6 @@ class DecisionEngine:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _check_deterministic(
-        task_vector: dict[str, float],
-        resource_vector: dict[str, Any],
-        risk_vector: dict[str, Any],
-        prompt: str = "",
-    ) -> str | None:
-        """Return a deterministic tool name if the task qualifies, else None.
-
-        Uses direct tool probing — tools know their own patterns better than
-        the approximate feature vector weights. Falls back to vector thresholds
-        when no prompt is provided (e.g. during tests).
-
-        Priority order:
-          1. CharCounterTool  — exact character/substring counting
-          2. CalculatorTool   — arithmetic expressions
-          3. JsonParserTool   — JSON extraction tasks
-        """
-        from app.executors.tools import CharCounterTool, CalculatorTool
-
-        if prompt:
-            # Direct probe — most reliable
-            if CharCounterTool().can_handle(prompt):
-                return "deterministic:counter"
-            if CalculatorTool().can_handle(prompt):
-                return "deterministic:calculator"
-        else:
-            # Fallback for callers that don't pass the raw prompt
-            math_weight = task_vector.get("math", 0.0)
-            complexity = resource_vector.get("complexity", 1.0)
-            if math_weight > 0.9 and complexity < 0.3:
-                return "deterministic:calculator"
-
-        if risk_vector.get("needs_json") and task_vector.get("extraction", 0.0) > 0.8:
-            return "deterministic:json"
-
-        return None
 
     @staticmethod
     def _compute_weighted_accuracy(

@@ -154,13 +154,11 @@ class TestRiskVector:
         )
         assert risk.needs_json is True
         assert risk.strict_formatting is True
-        assert risk.needs_deterministic is True
 
-    def test_math_sets_deterministic(
+    def test_math_sets_high_accuracy(
         self, gen: TaskVectorGenerator, extractor: FeatureExtractor
     ) -> None:
         _, _, risk = _extract_and_generate("Calculate 15 * 23", extractor, gen)
-        assert risk.needs_deterministic is True
         assert risk.needs_high_accuracy is True
 
     def test_code_sets_high_accuracy(
@@ -178,7 +176,6 @@ class TestRiskVector:
             "Tell me something interesting", extractor, gen
         )
         assert risk.needs_json is False
-        assert risk.needs_deterministic is False
         assert risk.needs_high_accuracy is False
         assert risk.strict_formatting is False
 
