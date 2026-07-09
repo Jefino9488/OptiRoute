@@ -42,15 +42,24 @@ COPY pyproject.toml uv.lock ./
 # Install all deps (llama-cpp-python from ROCm wheel index — falls back to CPU at runtime)
 RUN uv sync --frozen --no-cache
 
-# ── Stage 2: Download GGUF model weights ──────────────────────────────────────
+# ── Stage 2: Get GGUF model weights ──────────────────────────────────────────
+# Copy from local models/ folder if available, otherwise download from HuggingFace
 FROM python:3.12-slim AS model-downloader
 
-# huggingface-hub for downloading from HF Hub
+# Copy local models/ folder into build context (if it exists)
+COPY models/ /tmp/models/
+
+# huggingface-hub for downloading from HF Hub (fallback)
 RUN pip install --no-cache-dir "huggingface-hub>=0.23"
 
-# Download Qwen2.5-3B-Instruct-Q4_K_M.gguf (~1.9 GB)
-# 2B-3B 4-bit models fit comfortably in 4 GB RAM (per official hackathon guidance)
-RUN mkdir -p /models && python -c "\
+# Check if local model exists, copy if present, else download
+RUN mkdir -p /models && \
+    if [ -f /tmp/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf ]; then \
+      echo "Copying local model weights..." && \
+      cp /tmp/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf /models/; \
+    else \
+      echo "Local model not found, downloading from HuggingFace..." && \
+      python -c "\
 from huggingface_hub import hf_hub_download; \
 path = hf_hub_download( \
     repo_id='bartowski/Qwen2.5-3B-Instruct-GGUF', \
@@ -59,7 +68,8 @@ path = hf_hub_download( \
     local_dir_use_symlinks=False, \
 ); \
 print(f'Downloaded: {path}') \
-"
+"; \
+    fi
 
 # ── Stage 3: Final runtime image ──────────────────────────────────────────────
 FROM python:3.12-slim
