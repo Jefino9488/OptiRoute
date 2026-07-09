@@ -19,6 +19,7 @@ For the batch agent (sequential task processing), this is completely safe.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,34 @@ import structlog
 from app.executors.base import ExecutionResult
 
 logger = structlog.get_logger(__name__)
+
+
+def _detect_gpu_layers() -> int:
+    """Detect AMD ROCm at runtime.
+
+    Returns
+    -------
+    int
+        -1 if ROCm GPU is available (offload all layers to GPU),
+         0 if no GPU found (CPU-only inference).
+    """
+    if Path("/dev/kfd").exists():
+        try:
+            result = subprocess.run(
+                ["rocm-smi", "--showproductname"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_name = result.stdout.strip().split("\n")[0]
+                logger.info("local_executor.gpu_detected", backend="rocm", gpu=gpu_name)
+                return -1
+        except Exception as exc:
+            logger.warning("local_executor.rocm_detection_failed", error=str(exc))
+
+    logger.info("local_executor.gpu_detected", backend="cpu")
+    return 0
 
 # ---------------------------------------------------------------------------
 # Per-task temperature and token budgets (mirrors fireworks.py)
@@ -167,12 +196,14 @@ class LocalExecutor:
         try:
             from llama_cpp import Llama  # type: ignore[import]
 
-            logger.info("local_executor.loading", path=self._model_path.name)
+            gpu_layers = _detect_gpu_layers()
+            logger.info("local_executor.loading", path=self._model_path.name, n_gpu_layers=gpu_layers)
             t0 = time.perf_counter()
             self._llm = Llama(
                 model_path=str(self._model_path),
                 n_ctx=self._context_length,
                 n_threads=self._n_threads,
+                n_gpu_layers=gpu_layers,
                 verbose=False,
             )
             elapsed = (time.perf_counter() - t0) * 1000
@@ -180,6 +211,7 @@ class LocalExecutor:
                 "local_executor.loaded",
                 model=self._model_path.name,
                 load_ms=round(elapsed, 0),
+                n_gpu_layers=gpu_layers,
             )
             return True
         except Exception as exc:

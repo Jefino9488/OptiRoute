@@ -24,10 +24,10 @@ testpaths = ["tests"]
 asyncio_mode = "strict"
 
 [[tool.uv.index]]
-name = "llama-cpp-cpu"
-url = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+name = "llama-cpp-rocm"
+url = "https://abetlen.github.io/llama-cpp-python/whl/rocm60"
 explicit = true
 
 [tool.uv.sources]
-llama-cpp-python = [{ index = "llama-cpp-cpu" }]
+llama-cpp-python = [{ index = "llama-cpp-rocm" }]
 

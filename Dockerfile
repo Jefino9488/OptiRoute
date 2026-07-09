@@ -1,7 +1,7 @@
 # OptiRoute — Evaluation Container
 #
 # Multi-stage build:
-#   Stage 1 (builder)         — install Python deps including llama-cpp-python
+#   Stage 1 (builder)         — install Python deps including llama-cpp-python (ROCm)
 #   Stage 2 (model-downloader)— download Qwen2.5-3B-Instruct GGUF (~1.9 GB)
 #   Stage 3 (final)           — assemble runtime image (no build tools)
 #
@@ -9,6 +9,7 @@
 #   - No internet access needed at runtime
 #   - No Ollama or external model runtime required
 #   - FIREWORKS_API_KEY / FIREWORKS_BASE_URL / ALLOWED_MODELS injected at runtime by harness
+#   - Runtime GPU detection: ROCm if available, else CPU-only fallback
 #
 # Build for linux/amd64 (required by judging VM, even on Apple Silicon):
 #   docker buildx build --platform linux/amd64 -t optiroute:latest .
@@ -38,7 +39,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
-# Install all deps (including llama-cpp-python from pre-built CPU wheel index)
+# Install all deps (llama-cpp-python from ROCm wheel index — falls back to CPU at runtime)
 RUN uv sync --frozen --no-cache
 
 # ── Stage 2: Download GGUF model weights ──────────────────────────────────────
