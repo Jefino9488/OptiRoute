@@ -27,30 +27,28 @@ async def generate_dashboard(prompts: list[BenchmarkPrompt]) -> dict[str, Any]:
     results_by_category: dict[str, list[BenchmarkResult]] = defaultdict(list)
     
     for bp in prompts:
-        decision, result = await pipeline.route(bp.prompt, task_type=bp.category)
+        result = await pipeline.route(bp.prompt)
         
-        model_used = result.model_used
+        model_used = result["model_used"]
         distribution[model_used] += 1
         
-        cost_by_category[bp.category] += result.cost
+        cost_by_category[bp.category] += result["cost"]
         count_by_category[bp.category] += 1
         
-        if decision.alternatives_considered:
-            if len(decision.alternatives_considered) > 0:
-                first_model = decision.alternatives_considered[0].get("model", "unknown")
-                if first_model != model_used:
-                    path = f"{first_model} -> {model_used}"
-                    escalations[path] += 1
+        if result.get("escalated"):
+            # For simplicity since we don't return the full decision tree in the dict
+            # we just track that an escalation occurred for this model
+            escalations[f"escalated_to_{model_used}"] += 1
                     
         br = BenchmarkResult(
             prompt=bp.prompt,
             expected_output=bp.expected_output,
-            actual_output=result.response,
+            actual_output=result["response"],
             category=bp.category,
             model_id=model_used,
-            cost=result.cost,
-            tokens_input=result.tokens_input,
-            tokens_output=result.tokens_output,
+            cost=result["cost"],
+            tokens_input=0, # not provided in dict, but not strictly needed for accuracy
+            tokens_output=0,
         )
         results_by_category[bp.category].append(br)
 
