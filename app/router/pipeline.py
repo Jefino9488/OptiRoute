@@ -422,6 +422,7 @@ class RoutingPipeline:
             resource_vector=resource_dict,
             risk_vector=risk_dict,
             required_accuracy=required_accuracy,
+            prompt=prompt,
         )
 
     async def _try_local_execute(

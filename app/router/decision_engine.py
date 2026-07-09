@@ -82,6 +82,7 @@ class DecisionEngine:
         resource_vector: dict[str, Any],
         risk_vector: dict[str, Any],
         required_accuracy: float = 0.8,
+        prompt: str = "",
     ) -> RoutingDecision:
         """Run the 7-step routing algorithm and return a decision.
 
