@@ -277,7 +277,6 @@ class RoutingPipeline:
                         model_id=current_model,
                         task_type=features.task_type,
                         system_prompt=fireworks_system_prompt,
-                        max_tokens=resource_dict.get("output_tokens"),
                     )
                     
                     result.cost = self._matrix.estimate_cost(
