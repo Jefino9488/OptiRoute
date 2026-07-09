@@ -46,11 +46,11 @@ class ResourceVector:
     """Estimated resource requirements for executing the task."""
 
     expected_input_tokens: float = 0.0
-    expected_output_tokens: int = 0
+    output_budget_bucket: str = "Medium"
     expected_context_length: float = 0.0
     complexity: float = 0.0
 
-    def to_dict(self) -> dict[str, float]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict."""
         return asdict(self)
 
@@ -195,14 +195,25 @@ class TaskVectorGenerator:
         base_output *= (0.8 + features.complexity * 0.4)
 
         # Hard clamp limits to prevent pathological prompts from runaway cost
-        expected_output_tokens = int(min(max(base_output, 50), 2048))
+        raw_output_tokens = min(max(base_output, 50), 2048)
         
-        context_length = input_tokens + expected_output_tokens
+        if raw_output_tokens <= 256:
+            budget_bucket = "Small"
+            expected_context = input_tokens + 256
+        elif raw_output_tokens <= 512:
+            budget_bucket = "Medium"
+            expected_context = input_tokens + 512
+        elif raw_output_tokens <= 1024:
+            budget_bucket = "Large"
+            expected_context = input_tokens + 1024
+        else:
+            budget_bucket = "Very_Large"
+            expected_context = input_tokens + 2048
 
         return ResourceVector(
             expected_input_tokens=round(input_tokens, 1),
-            expected_output_tokens=expected_output_tokens,
-            expected_context_length=round(context_length, 1),
+            output_budget_bucket=budget_bucket,
+            expected_context_length=round(expected_context, 1),
             complexity=features.complexity,
         )
 

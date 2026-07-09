@@ -158,9 +158,18 @@ class RoutingPipeline:
         task_vec, resource_vec, risk_vec = self._vectorizer.generate(features)
 
         task_dict = task_vec.to_dict()
+        _BUCKET_MAP = {
+            "Small": 256,
+            "Medium": 512,
+            "Large": 1024,
+            "Very_Large": 2048,
+        }
+        output_tokens = _BUCKET_MAP.get(resource_vec.output_budget_bucket, 512)
+
         resource_dict = {
             "input_tokens": resource_vec.expected_input_tokens,
-            "output_tokens": resource_vec.expected_output_tokens,
+            "output_tokens": output_tokens,
+            "output_budget_bucket": resource_vec.output_budget_bucket,
             "context_length": resource_vec.expected_context_length,
             "complexity": resource_vec.complexity,
         }
@@ -270,6 +279,7 @@ class RoutingPipeline:
                 break
 
             max_retries = 2
+            current_max_tokens = resource_dict.get("output_tokens", 1024)
             for attempt in range(max_retries):
                 try:
                     result = await self._fireworks.execute(
@@ -277,6 +287,7 @@ class RoutingPipeline:
                         model_id=current_model,
                         task_type=features.task_type,
                         system_prompt=fireworks_system_prompt,
+                        max_tokens=current_max_tokens,
                     )
                     
                     result.cost = self._matrix.estimate_cost(
@@ -289,17 +300,25 @@ class RoutingPipeline:
                     is_empty = not result.response.strip()
                     is_error = "[ERROR]" in result.response
 
-                    # Only retry on transient failures
-                    is_transient = is_empty or is_error or (finish_reason == "length")
-                    
-                    if is_transient and attempt < max_retries - 1:
+                    # Smarter retry policy
+                    if finish_reason == "length":
                         logger.warning(
                             "pipeline.transient_failure_retry",
                             model=current_model,
                             attempt=attempt + 1,
-                            reason=finish_reason or ("empty" if is_empty else "error")
+                            reason="length (increasing budget)"
                         )
-                        continue # Try same model again
+                        current_max_tokens *= 2 # Retry with a larger budget
+                        continue
+
+                    if is_empty or is_error:
+                        logger.warning(
+                            "pipeline.transient_failure_retry",
+                            model=current_model,
+                            attempt=attempt + 1,
+                            reason="empty" if is_empty else "error"
+                        )
+                        continue # Retry same model
                         
                     break # Success or non-transient, exit retry loop
                     
