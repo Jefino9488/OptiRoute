@@ -46,7 +46,7 @@ class ResourceVector:
     """Estimated resource requirements for executing the task."""
 
     expected_input_tokens: float = 0.0
-    expected_output_tokens: float = 0.0
+    expected_output_tokens: int = 0
     expected_context_length: float = 0.0
     complexity: float = 0.0
 
@@ -195,7 +195,7 @@ class TaskVectorGenerator:
         base_output *= (0.8 + features.complexity * 0.4)
 
         # Hard clamp limits to prevent pathological prompts from runaway cost
-        expected_output_tokens = round(min(max(base_output, 50.0), 2048.0), 1)
+        expected_output_tokens = int(min(max(base_output, 50), 2048))
         
         context_length = input_tokens + expected_output_tokens
 
