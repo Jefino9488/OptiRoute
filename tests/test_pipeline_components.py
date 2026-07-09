@@ -4,77 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from app.executors.tools import CalculatorTool, DeterministicExecutor, JsonParserTool
 from app.cache.manager import CacheManager, CachedResponse
 from app.confidence.validator import ConfidenceValidator
 from app.metrics.collector import MetricsCollector, RequestMetric
-
-
-# ─── Calculator Tool ─────────────────────────────────────────────
-
-
-class TestCalculatorTool:
-    def setup_method(self) -> None:
-        self.calc = CalculatorTool()
-
-    def test_can_handle_simple_expr(self) -> None:
-        assert self.calc.can_handle("What is 15 * 23?")
-
-    def test_can_handle_no_expr(self) -> None:
-        assert not self.calc.can_handle("Tell me a story")
-
-    def test_execute_multiplication(self) -> None:
-        result = self.calc.execute("Calculate 15 * 23")
-        assert result.response == "345"
-        assert result.confidence == 1.0
-        assert result.cost == 0.0
-
-    def test_execute_addition(self) -> None:
-        result = self.calc.execute("What is 100 + 200?")
-        assert result.response == "300"
-
-    def test_execute_division(self) -> None:
-        result = self.calc.execute("Calculate 100 / 4")
-        assert result.response == "25.0"
-
-
-# ─── JSON Parser Tool ────────────────────────────────────────────
-
-
-class TestJsonParserTool:
-    def setup_method(self) -> None:
-        self.parser = JsonParserTool()
-
-    def test_can_handle_json_request(self) -> None:
-        assert self.parser.can_handle("Parse this JSON: {}")
-
-    def test_cannot_handle_non_json(self) -> None:
-        assert not self.parser.can_handle("Write a poem")
-
-
-# ─── Deterministic Executor ──────────────────────────────────────
-
-
-class TestDeterministicExecutor:
-    def setup_method(self) -> None:
-        self.executor = DeterministicExecutor()
-
-    def test_handles_calculator(self) -> None:
-        result = self.executor.try_execute("What is 5 + 3?")
-        assert result is not None
-        assert result.response == "8"
-        assert result.cost == 0.0
-
-    def test_returns_none_for_non_deterministic(self) -> None:
-        result = self.executor.try_execute("Explain quantum physics")
-        assert result is None
-
-    def test_handles_calculator_hint(self) -> None:
-        result = self.executor.try_execute(
-            "Calculate 10 * 5", tool_hint="deterministic:calculator"
-        )
-        assert result is not None
-        assert result.response == "50"
 
 
 # ─── Cache Manager ───────────────────────────────────────────────

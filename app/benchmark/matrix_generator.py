@@ -73,8 +73,14 @@ class CapabilityMatrixGenerator:
 
         # Build updated matrix
         updated: dict[str, Any] = {}
+        
+        # First, copy over existing models that weren't tested this time
+        for model_id, data in existing_data.items():
+            if model_id not in aggregated:
+                updated[model_id] = data
+
         for model_id, category_scores in aggregated.items():
-            # Preserve existing cost data
+            # Preserve existing cost data for the tested models
             existing = existing_data.get(model_id, {})
 
             # Map category scores to capability dimensions
@@ -149,29 +155,39 @@ class CapabilityMatrixGenerator:
 
         lines: list[str] = [
             "# OptiRoute Benchmark Report\n",
-            "## Model Capability Scores\n",
+            "## Model Performance by Capability\n",
         ]
 
-        # Collect all categories
-        all_categories = set()
-        for scores in aggregated.values():
-            all_categories.update(scores.keys())
-        categories = sorted(all_categories)
+        # Group by category -> model
+        by_category: dict[str, dict[str, list[BenchmarkResult]]] = {}
+        for model_id, results in all_results.items():
+            for r in results:
+                if r.category not in by_category:
+                    by_category[r.category] = {}
+                if model_id not in by_category[r.category]:
+                    by_category[r.category][model_id] = []
+                by_category[r.category][model_id].append(r)
 
-        # Table header
-        header = "| Model | " + " | ".join(categories) + " | Avg |"
-        separator = "|---|" + "|".join(["---"] * len(categories)) + "|---|"
-        lines.append(header)
-        lines.append(separator)
-
-        # Table rows
-        for model_id, scores in sorted(aggregated.items()):
-            values = [f"{scores.get(c, 0.0):.2f}" for c in categories]
-            avg = sum(scores.values()) / len(scores) if scores else 0.0
-            row = f"| {model_id} | " + " | ".join(values) + f" | {avg:.2f} |"
-            lines.append(row)
-
-        lines.append("")
+        for category in sorted(by_category.keys()):
+            lines.append(f"### {category.capitalize()}\n")
+            lines.append("| Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |")
+            lines.append("|---|---|---|---|---|---|")
+            
+            for model_id in sorted(by_category[category].keys()):
+                results = by_category[category][model_id]
+                accuracy = sum(r.score for r in results) / len(results)
+                avg_latency = sum(r.latency_ms for r in results) / len(results)
+                avg_out_tokens = sum(r.tokens_output for r in results) / len(results)
+                avg_cost = sum(r.cost for r in results) / len(results)
+                
+                # Recommended routing threshold
+                if accuracy < _FAILURE_THRESHOLD:
+                    rec = "DO NOT ROUTE"
+                else:
+                    rec = f">= {accuracy - 0.05:.2f}"
+                    
+                lines.append(f"| {model_id} | {accuracy:.2f} | {avg_latency:.0f}ms | {avg_out_tokens:.0f} | ${avg_cost:.6f} | {rec} |")
+            lines.append("")
 
         # Failure patterns
         lines.append("## Failure Patterns\n")
@@ -183,16 +199,6 @@ class CapabilityMatrixGenerator:
                 lines.append(f"- **{model_id}**: no critical failures")
 
         lines.append("")
-
-        # Cost summary
-        lines.append("## Token Usage Summary\n")
-        for model_id, results in all_results.items():
-            total_in = sum(r.tokens_input for r in results)
-            total_out = sum(r.tokens_output for r in results)
-            total_cost = sum(r.cost for r in results)
-            lines.append(
-                f"- **{model_id}**: {total_in} in / {total_out} out / ${total_cost:.6f}"
-            )
 
         return "\n".join(lines)
 

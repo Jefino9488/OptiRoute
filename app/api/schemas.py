@@ -82,10 +82,6 @@ class RiskVectorResponse(BaseModel):
         default=False,
         description="Response must be valid JSON",
     )
-    needs_deterministic: bool = Field(
-        default=False,
-        description="Response must be deterministic (e.g. math)",
-    )
     needs_high_accuracy: bool = Field(
         default=False,
         description="Task requires very high factual accuracy",

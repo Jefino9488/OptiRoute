@@ -184,7 +184,6 @@ class PromptPreprocessor:
                     prompt=forwarded,
                     system_prompt=_COMPRESS_SYSTEM,
                     max_tokens=200,
-                    temperature=0.1,
                 )
                 compressed = compressed_result.response.strip()
                 # Only use the compressed version if it's meaningfully shorter

@@ -4,8 +4,7 @@ Covers:
 - Math task routing to cheapest model
 - Code task routing to Kimi when accuracy demands it
 - Creative task excluding Kimi (fails_on)
-- Deterministic bypass for simple math
-- Deterministic bypass for JSON extraction
+- Regression: Math and JSON tasks route to LLMs, not deterministic tools
 - Fallback to minimax-m3 when no model meets threshold
 - Cost estimation with Kimi's 1.3x multiplier
 - Escalation policy basics
@@ -74,7 +73,6 @@ def test_math_task_routes_to_cheapest(engine: DecisionEngine) -> None:
     # minimax-m3 is the cheapest that clears 0.75 accuracy threshold for math
     assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b")
     assert decision.predicted_accuracy >= 0.75
-    assert not decision.is_deterministic
 
 
 # ---------------------------------------------------------------------------
@@ -115,45 +113,53 @@ def test_creative_task_excludes_kimi(engine: DecisionEngine) -> None:
     assert "kimi-k2p7-code" not in [
         a["model"] for a in decision.alternatives_considered
     ]
-    assert not decision.is_deterministic
 
 
 # ---------------------------------------------------------------------------
-# 4. Deterministic bypass for simple math
+# 4. Regression: Math and JSON tasks route to LLMs, not deterministic tools
 # ---------------------------------------------------------------------------
 
 
-def test_deterministic_bypass_calculator(engine: DecisionEngine) -> None:
-    """A very simple math task (high math weight, low complexity) should be
-    handled by the deterministic calculator at $0 cost."""
+def test_regression_math_task_routes_to_llm(engine: DecisionEngine) -> None:
+    """Previously 'What is 2 + 2?' or 'Calculate the derivative of 3x^4' might
+    have been incorrectly intercepted by deterministic tools. Ensure high-math,
+    low-complexity vectors route to LLMs."""
     task_vector = {"math": 0.95, "reasoning": 0.05}
     resource_vector = {"input_tokens": 20, "output_tokens": 10, "complexity": 0.1}
     risk_vector: dict = {}
 
-    decision = engine.select_model(task_vector, resource_vector, risk_vector)
+    decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
-    assert decision.model_selected == "deterministic:calculator"
-    assert decision.estimated_cost == 0.0
-    assert decision.predicted_accuracy == 1.0
-    assert decision.is_deterministic
-
-
-# ---------------------------------------------------------------------------
-# 5. Deterministic bypass for JSON extraction
-# ---------------------------------------------------------------------------
+    assert not decision.model_selected.startswith("deterministic:")
+    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b")
+    assert decision.predicted_accuracy >= 0.75
 
 
-def test_deterministic_bypass_json(engine: DecisionEngine) -> None:
-    """A JSON extraction task with needs_json flag should bypass LLM."""
+def test_regression_json_task_routes_to_llm(engine: DecisionEngine) -> None:
+    """A JSON extraction task ('Validate this JSON') should route to an LLM,
+    not a deterministic JSON parser."""
     task_vector = {"extraction": 0.9, "general_qa": 0.1}
     resource_vector = {"input_tokens": 100, "output_tokens": 50, "complexity": 0.4}
     risk_vector = {"needs_json": True}
 
-    decision = engine.select_model(task_vector, resource_vector, risk_vector)
+    decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
-    assert decision.model_selected == "deterministic:json"
-    assert decision.estimated_cost == 0.0
-    assert decision.is_deterministic
+    assert not decision.model_selected.startswith("deterministic:")
+    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b", "kimi-k2p7-code")
+
+
+def test_regression_haiku_routes_to_llm(engine: DecisionEngine) -> None:
+    """A task like 'Write a haiku with 5-7-5 syllables' should never be captured
+    by a math calculator despite having numbers."""
+    task_vector = {"creative": 0.95, "math": 0.05}
+    resource_vector = {"input_tokens": 30, "output_tokens": 50, "complexity": 0.3}
+    risk_vector: dict = {}
+
+    decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
+
+    assert not decision.model_selected.startswith("deterministic:")
+    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b")
+
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +268,6 @@ def test_routing_decision_to_dict() -> None:
     d = decision.to_dict()
     assert d["model_selected"] == "gemma-4-31b-it"
     assert d["estimated_cost"] == 0.00012
-    assert d["is_deterministic"] is False
     # Must be JSON-serialisable
     json.dumps(d)
 

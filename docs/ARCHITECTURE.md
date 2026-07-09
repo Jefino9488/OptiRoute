@@ -54,10 +54,9 @@
                           │   Decision Engine      │
                           │                        │
                           │  1. force_model?       │──Yes──→ Forced model
-                          │  2. Deterministic?     │──Yes──→ Tool ($0)
-                          │  3. Local LLM router   │──────→ local|kimi|minimax
+                          │  2. Local LLM router   │──────→ local|kimi|minimax
                           │     (max_tokens=15)    │
-                          │  4. Heuristic engine   │──────→ Capability matrix
+                          │  3. Heuristic engine   │──────→ Capability matrix
                           │     (fallback)         │
                           └───────────┬───────────┘
                                      │
@@ -97,16 +96,14 @@
 
 ---
 
-## Three-Stage Execution Policy
+## Two-Stage Execution Policy
 
 ```
-Priority 1: Deterministic Tools     → $0 cost, instant, 100% accurate
-Priority 2: Local Model (2B-3B)     → $0 Fireworks token cost, ~2-5s latency
-Priority 3: Fireworks API Models    → $$ cost, lowest latency, highest accuracy
+Priority 1: Local Model (2B-3B)     → $0 Fireworks token cost, ~2-5s latency
+Priority 2: Fireworks API Models    → $$ cost, lowest latency, highest accuracy
 ```
 
 The decision engine doesn't explicitly implement these priorities. Instead, it uses the capability matrix where:
-- Deterministic tools are checked first via a hardcoded bypass
 - The local model has `cost_per_1k = $0.00` in the matrix
 - Fireworks models have their real API costs
 
@@ -139,8 +136,7 @@ app/
 ├── executors/
 │   ├── base.py            ← ExecutionResult dataclass
 │   ├── fireworks.py       ← Fireworks API (OpenAI SDK)
-│   ├── local.py           ← Local LLM (llama-cpp-python) — $0 cost
-│   └── tools.py           ← Deterministic: calculator, JSON, regex
+│   └── local.py           ← Local LLM (llama-cpp-python) — $0 cost
 │
 ├── confidence/
 │   └── validator.py       ← Output quality scoring
@@ -217,26 +213,22 @@ RouteResponse(response, model_used, cost, latency_ms, confidence, cache_hit, ...
 
 ```python
 def select_model(task_vector, resource_vector, risk_vector, required_accuracy):
-    # Step 1: Deterministic check
-    if is_pure_math(task_vector): return "calculator_tool"
-    if is_json_parse(task_vector): return "json_tool"
-
-    # Step 2: Failure filtering
+    # Step 1: Failure filtering
     dominant_task = get_dominant_task(task_vector)
     candidates = [m for m in models if dominant_task not in m.fails_on]
     candidates = [m for m in candidates if m.max_context >= resource_vector.context]
 
-    # Step 3: Capability scoring (weighted average over FULL task vector)
+    # Step 2: Capability scoring (weighted average over FULL task vector)
     for model in candidates:
         model.predicted_accuracy = (
             sum(task_vector[d] * model.capabilities[d] for d in dimensions)
             / sum(task_vector[d] for d in dimensions)
         )
 
-    # Step 4: Filter by accuracy threshold
+    # Step 3: Filter by accuracy threshold
     eligible = [m for m in candidates if m.predicted_accuracy >= required_accuracy]
 
-    # Step 5: Cost estimation (local model = $0.00)
+    # Step 4: Cost estimation (local model = $0.00)
     for model in eligible:
         model.estimated_cost = (
             resource_vector.input_tokens * model.cost_per_1k_input / 1000
@@ -244,7 +236,7 @@ def select_model(task_vector, resource_vector, risk_vector, required_accuracy):
               * model.cost_per_1k_output / 1000
         )
 
-    # Step 6: Select cheapest (local model wins when eligible!)
+    # Step 5: Select cheapest (local model wins when eligible!)
     return min(eligible, key=lambda m: m.estimated_cost)
 ```
 

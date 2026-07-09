@@ -1,0 +1,32 @@
+[
+  {
+    "prompt": "What is the capital of Japan?",
+    "expected_output": "Tokyo",
+    "category": "retrieval",
+    "difficulty": "easy"
+  },
+  {
+    "prompt": "Who painted the Mona Lisa?",
+    "expected_output": "Leonardo da Vinci",
+    "category": "retrieval",
+    "difficulty": "easy"
+  },
+  {
+    "prompt": "In what year did the Apollo 11 moon landing occur?",
+    "expected_output": "1969",
+    "category": "retrieval",
+    "difficulty": "easy"
+  },
+  {
+    "prompt": "What is the chemical symbol for Gold?",
+    "expected_output": "Au",
+    "category": "retrieval",
+    "difficulty": "easy"
+  },
+  {
+    "prompt": "Which planet is closest to the Sun?",
+    "expected_output": "Mercury",
+    "category": "retrieval",
+    "difficulty": "easy"
+  }
+]

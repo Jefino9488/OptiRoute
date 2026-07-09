@@ -127,14 +127,22 @@ class Settings(BaseSettings):
         Falls back to local dev defaults when env var is not set.
         """
         if not self.allowed_models_raw.strip():
-            return dict(self._local_dev_models)  # local dev fallback
-        result: dict[str, str] = {}
-        for full in self.allowed_models_raw.split(","):
-            full = full.strip()
-            if full:
-                short = full.rsplit("/", 1)[-1]  # last segment = short name
-                result[short] = full
-        return result if result else dict(self._local_dev_models)
+            result = dict(self._local_dev_models)  # local dev fallback
+        else:
+            result = {}
+            for full in self.allowed_models_raw.split(","):
+                full = full.strip()
+                if full:
+                    short = full.rsplit("/", 1)[-1]  # last segment = short name
+                    result[short] = full
+            if not result:
+                result = dict(self._local_dev_models)
+                
+        # Always inject the local model if enabled
+        if self.local_model_enabled:
+            result[self.local_model_name] = self.local_model_path
+            
+        return result
 
     def get_model_path(self, short_name: str) -> str:
         """Resolve a short model name to its full Fireworks API path.

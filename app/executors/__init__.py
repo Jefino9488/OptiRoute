@@ -1,1 +1,1 @@
-"""Executors — Fireworks API client and deterministic tools."""
+"""Executors — Fireworks API client and local execution."""
