@@ -288,6 +288,9 @@ class RoutingPipeline:
             # Use the vectorizer's budget output_tokens, but the retry loop will double it 
             # if the model legitimately hits the length truncation reason.
             current_max_tokens = resource_dict.get("output_tokens", 1024)
+            # Give thinking models a baseline of 2048 so they don't waste the first attempt
+            if current_model in ("minimax-m3", "kimi-k2p7-code"):
+                current_max_tokens = max(current_max_tokens, 2048)
             for attempt in range(max_retries):
                 try:
                     result = await self._fireworks.execute(
