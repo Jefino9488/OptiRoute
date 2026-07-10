@@ -63,10 +63,20 @@ class Settings(BaseSettings):
         default=0.7,
         ge=0.0,
         le=1.0,
-        description="Minimum confidence score before escalation is triggered",
+        description="Minimum confidence to accept an answer without escalating",
     )
 
-    # --- Data Paths ---
+    # --- ML Router ---
+    ml_router_enabled: bool = Field(
+        default=True,
+        description="Enable the experimental Supra-Router-51M ML orchestrator",
+    )
+    ml_router_model_path: Path = Field(
+        default=Path("models/Supra-Router-51M-Q4_K_M.gguf"),
+        description="Path to the ML Router GGUF model",
+    )
+
+    # --- Local Model Configuration ---
     capability_matrix_path: str = Field(
         default="data/capability_matrix.json",
         description="Path to the capability matrix JSON file",

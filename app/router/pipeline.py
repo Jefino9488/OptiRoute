@@ -21,14 +21,16 @@ from app.confidence.validator import ConfidenceValidator
 from app.config import get_settings
 from app.executors.base import ExecutionResult
 from app.executors.fireworks import FireworksExecutor
+from app.executors.local import LocalExecutor
+from app.features.compiler import InferencePolicyCompiler
 from app.features.extractor import FeatureExtractor
 from app.features.normalizer import RequestNormalizer
 from app.features.preprocessor import PromptPreprocessor
-from app.features.compiler import InferencePolicyCompiler
 from app.features.vectorizer import TaskVectorGenerator
 from app.metrics.collector import MetricsCollector, RequestMetric
 from app.router.capability_matrix import CapabilityMatrix
 from app.router.decision_engine import DecisionEngine, RoutingDecision
+from app.router.ml_router import MLRouter
 from app.router.policy import EscalationPolicy
 
 logger = structlog.get_logger(__name__)
@@ -55,6 +57,11 @@ class RoutingPipeline:
         # Routing (heuristic engine — kept as fallback)
         self._matrix = CapabilityMatrix(settings.capability_matrix_path)
         self._engine = DecisionEngine(self._matrix)
+        
+        settings = get_settings()
+        self._ml_router: MLRouter | None = None
+        if settings.ml_router_enabled:
+            self._ml_router = MLRouter(settings.ml_router_model_path)
         self._policy = EscalationPolicy(
             max_depth=settings.max_escalation_depth,
             confidence_threshold=settings.confidence_threshold,
@@ -767,6 +774,29 @@ class RoutingPipeline:
                 reasoning=f"Model forced by caller: {force_model}",
             )
 
+        # Level 1.5: ML Router (Supra-Router-51M)
+        if self._ml_router:
+            ml_pred = self._ml_router.predict(prompt)
+            if ml_pred:
+                logger.info(
+                    "pipeline.ml_router_prediction",
+                    domain=ml_pred.domain,
+                    complexity=ml_pred.complexity,
+                    route=ml_pred.route,
+                    justification=ml_pred.justification,
+                )
+                if ml_pred.route == "small model":
+                    local_model_id = settings.local_model_name
+                    if local_model_id in self._matrix.get_all_models():
+                        cost = self._matrix.estimate_cost(local_model_id, resource_dict.get("input_tokens", 0), resource_dict.get("output_tokens", 0)) or 0.0
+                        return RoutingDecision(
+                            model_selected=local_model_id,
+                            estimated_cost=round(cost, 8),
+                            predicted_accuracy=0.99,  # bypass further heuristic drops
+                            reasoning=f"ML Router override: {ml_pred.justification}",
+                        )
+                # If ml_pred.route == "big model", we fall through to the heuristic engine
+                
         # Level 2: Local LLM router
         if self._local and settings.local_router_enabled:
             routed = await self._local.route(prompt)

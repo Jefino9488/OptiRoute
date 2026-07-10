@@ -45,13 +45,20 @@ RUN pip install --no-cache-dir "huggingface-hub>=0.23"
 RUN mkdir -p /models
 
 # Mount local models/ dir at build time; download from HF Hub if not present.
-RUN --mount=type=bind,source=models,target=/local_models \
-    if [ -f /local_models/Qwen2.5-3B-Instruct-Q4_K_M.gguf ]; then \
-        echo "Found local model, copying..."; \
-        cp /local_models/Qwen2.5-3B-Instruct-Q4_K_M.gguf /models/Qwen2.5-3B-Instruct-Q4_K_M.gguf; \
+RUN --mount=type=bind,source=models/,target=/local_models \
+    if [ -f "/local_models/Qwen2.5-3B-Instruct-Q4_K_M.gguf" ]; then \
+        echo "Using local model..."; \
+        cp /local_models/Qwen2.5-3B-Instruct-Q4_K_M.gguf /models/; \
     else \
         echo "Local model not found, downloading from HF Hub..."; \
         python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='bartowski/Qwen2.5-3B-Instruct-GGUF', filename='Qwen2.5-3B-Instruct-Q4_K_M.gguf', local_dir='/models', local_dir_use_symlinks=False)"; \
+    fi; \
+    if [ -f "/local_models/Supra-Router-51M-Q4_K_M.gguf" ]; then \
+        echo "Using local ML Router model..."; \
+        cp /local_models/Supra-Router-51M-Q4_K_M.gguf /models/; \
+    else \
+        echo "ML Router not found, downloading from HF Hub..."; \
+        python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='SupraLabs/Supra-Router-51M-gguf', filename='Supra-Router-51M-Q4_K_M.gguf', local_dir='/models', local_dir_use_symlinks=False)"; \
     fi
 
 # ── Stage 3: Final runtime image ──────────────────────────────────────────────
