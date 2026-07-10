@@ -73,7 +73,10 @@ class LocalExecutor:
         self._server_url = settings.local_server_url  # e.g. http://localhost:8080/v1
         self._model_path = model_path
         self._available: bool = False
-        self._client = httpx.AsyncClient(timeout=120.0)
+        # Hard 30-second timeout per request. If the local model stalls
+        # (e.g. context overflow on a complex prompt), we escalate immediately
+        # rather than wasting 2+ minutes on a timed-out response.
+        self._client = httpx.AsyncClient(timeout=30.0)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -197,6 +200,21 @@ class LocalExecutor:
             )
             response.raise_for_status()
             data = response.json()
+        except httpx.TimeoutException:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.warning(
+                "local_executor.timeout",
+                latency_ms=round(elapsed_ms, 1),
+                task_type=task_type,
+                max_tokens=max_tok,
+            )
+            # Return confidence=0.0 so pipeline immediately escalates to Fireworks
+            return ExecutionResult(
+                response="[LOCAL_TIMEOUT] llama-server did not respond within 30s.",
+                model_used="local:qwen-2.5-3b",
+                confidence=0.0,
+                latency_ms=round(elapsed_ms, 1),
+            )
         except Exception as exc:
             logger.error("local_executor.api_failed", error=str(exc))
             return ExecutionResult(

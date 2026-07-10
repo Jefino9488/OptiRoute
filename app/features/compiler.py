@@ -108,7 +108,23 @@ class InferencePolicyCompiler:
             category="task",
             priority=80,
             condition=lambda t, res, risk, m: risk.get("high_accuracy_required", False) and t.get("math", 0.0) > 0.5,
-            instruction="Compute carefully and step-by-step. Return concise working and the final answer clearly. Maximum 8 bullet points or short steps."
+            instruction=(
+                "Work step by step. Label each arithmetic step (Step 1:, Step 2:, ...). "
+                "Show each intermediate result on its own line. "
+                "State the final answer on the last line as: **Answer: [value]**. "
+                "Do not skip steps."
+            )
+        )
+        self._registry.register(
+            name="task:math_counting",
+            category="task_counting",
+            priority=85,
+            condition=lambda t, res, risk, m: t.get("math", 0.0) > 0.5 and risk.get("is_counting", False),
+            instruction=(
+                "For counting tasks: first list every occurrence you find, numbered (1. ..., 2. ...). "
+                "Then state the total count as a final line: Total: N. "
+                "Do not guess. Enumerate every item before totalling."
+            )
         )
         self._registry.register(
             name="task:code",
@@ -122,23 +138,66 @@ class InferencePolicyCompiler:
             category="task",
             priority=70,
             condition=lambda t, res, risk, m: t.get("reasoning", 0.0) > 0.6,
-            instruction="Solve step by step internally. Return only the final explanation in a maximum of 4 short bullet points or sentences."
+            instruction=(
+                "Read all constraints carefully before answering. "
+                "If the constraints are contradictory, explicitly state: CONTRADICTION DETECTED and explain which constraints conflict. "
+                "Then provide the most logically consistent resolution. "
+                "Use at most 4 concise bullet points for your final answer."
+            )
         )
         self._registry.register(
-            name="task:creative",
+            name="task:sentiment",
             category="task",
-            priority=55,
-            condition=lambda t, res, risk, m: t.get("creative", 0.0) > 0.6,
-            instruction="Be creative but concise. Maximum 150 words."
+            priority=78,
+            condition=lambda t, res, risk, m: t.get("sentiment", 0.0) > 0.5,
+            instruction=(
+                "Begin your response with exactly ONE word on the first line: Positive, Negative, or Neutral. "
+                "Then give a single sentence explaining your reasoning. "
+                "No other format is acceptable."
+            )
+        )
+        self._registry.register(
+            name="task:ner",
+            category="task",
+            priority=72,
+            condition=lambda t, res, risk, m: t.get("ner", 0.0) > 0.5,
+            instruction=(
+                "Extract named entities into explicit categories. Use this exact format:\n"
+                "People: [comma-separated list or none]\n"
+                "Organizations: [comma-separated list or none]\n"
+                "Locations: [comma-separated list or none]\n"
+                "Dates: [comma-separated list or none]\n"
+                "Include only entities explicitly stated in the text."
+            )
         )
         self._registry.register(
             name="task:extraction",
             category="task",
             priority=60,
             condition=lambda t, res, risk, m: t.get("extraction", 0.0) > 0.6,
-            instruction="Extract the requested information accurately. Pay close attention to exactly what entity type is requested (e.g. domains vs full emails, specific years). Return requested fields only without over-extracting. Be as brief as possible."
+            instruction=(
+                "Extract exactly what is requested. Pay close attention to the requested unit of information "
+                "(e.g. domains, not full email addresses; years, not full dates). "
+                "Return only the extracted data in the requested format. No commentary."
+            )
         )
-
+        self._registry.register(
+            name="task:creative",
+            category="task",
+            priority=55,
+            condition=lambda t, res, risk, m: t.get("creative", 0.0) > 0.6,
+            instruction="Be creative but concise. Maximum 200 words."
+        )
+        self._registry.register(
+            name="task:summarization",
+            category="task",
+            priority=65,
+            condition=lambda t, res, risk, m: t.get("summarization", 0.0) > 0.5,
+            instruction=(
+                "Summarize concisely. Follow any explicit format requirements (bullet points, sentences, word limits) exactly. "
+                "Do not add any information not present in the source text."
+            )
+        )
         self._registry.register(
             name="task:general_qa",
             category="task",
@@ -183,7 +242,11 @@ class InferencePolicyCompiler:
             category="model",
             priority=20,
             condition=lambda t, res, risk, m: "local" in m.lower(),
-            instruction="Produce compact answers. Avoid unnecessary reasoning."
+            instruction=(
+                "Produce compact, direct answers. "
+                "For any calculation, show each step explicitly. "
+                "Do not include unnecessary preamble."
+            )
         )
 
 
