@@ -19,6 +19,7 @@ from typing import Any
 
 import structlog
 
+from app.config import get_settings
 from app.router.capability_matrix import CapabilityMatrix
 
 logger = structlog.get_logger(__name__)
@@ -103,7 +104,10 @@ class DecisionEngine:
         RoutingDecision
         """
         dominant_task = self._get_dominant_task(task_vector)
-        candidates = self._matrix.get_all_models()
+        all_models = self._matrix.get_all_models()
+        allowed_models = set(get_settings().allowed_models.keys())
+        
+        candidates = [m for m in all_models if m in allowed_models or m.startswith("local:")]
 
         logger.info(
             "decision_engine.filtering",

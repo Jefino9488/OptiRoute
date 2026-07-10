@@ -11,7 +11,7 @@ import time
 from typing import Any
 
 import structlog
-from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
+from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError, NotFoundError
 
 from app.config import get_settings
 from app.executors.base import ExecutionResult
@@ -135,6 +135,14 @@ class FireworksExecutor:
                     delay=delay
                 )
                 await asyncio.sleep(delay)
+            except NotFoundError as exc:
+                logger.warning("fireworks.not_found", model=model_id, error=str(exc))
+                return ExecutionResult(
+                    response="[NOT_FOUND] Model not available (404).",
+                    model_used=model_id,
+                    confidence=0.0,
+                    raw_metadata={"error": str(exc)},
+                )
             except APITimeoutError as exc:
                 logger.error("fireworks.timeout", model=model_id, error=str(exc))
                 return ExecutionResult(

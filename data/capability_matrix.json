@@ -95,5 +95,68 @@
       "translation": 12
     },
     "avg_latency_ms": 2973.9
+  },
+  "gemma-4-31b-it": {
+    "capabilities": {
+      "math": 0.85,
+      "reasoning": 0.82,
+      "code": 0.85,
+      "creative": 0.7,
+      "translation": 0.3,
+      "extraction": 0.85,
+      "retrieval": 0.8,
+      "general_qa": 0.82
+    },
+    "cost_per_1k_input": 0.00015,
+    "cost_per_1k_output": 0.0006,
+    "avg_output_multiplier": 1.0,
+    "max_context": 8192,
+    "fails_on": ["translation"],
+    "supports_thinking": false,
+    "thinking_cost_multiplier": 1.0,
+    "samples": {},
+    "avg_latency_ms": 1500.0
+  },
+  "gemma-4-31b-it-nvfp4": {
+    "capabilities": {
+      "math": 0.80,
+      "reasoning": 0.80,
+      "code": 0.80,
+      "creative": 0.65,
+      "translation": 0.25,
+      "extraction": 0.80,
+      "retrieval": 0.75,
+      "general_qa": 0.78
+    },
+    "cost_per_1k_input": 0.0001,
+    "cost_per_1k_output": 0.0004,
+    "avg_output_multiplier": 1.0,
+    "max_context": 8192,
+    "fails_on": ["translation"],
+    "supports_thinking": false,
+    "thinking_cost_multiplier": 1.0,
+    "samples": {},
+    "avg_latency_ms": 1200.0
+  },
+  "gemma-4-26b-a4b-it": {
+    "capabilities": {
+      "math": 0.75,
+      "reasoning": 0.75,
+      "code": 0.75,
+      "creative": 0.60,
+      "translation": 0.2,
+      "extraction": 0.75,
+      "retrieval": 0.70,
+      "general_qa": 0.75
+    },
+    "cost_per_1k_input": 0.00005,
+    "cost_per_1k_output": 0.0002,
+    "avg_output_multiplier": 1.0,
+    "max_context": 8192,
+    "fails_on": ["translation"],
+    "supports_thinking": false,
+    "thinking_cost_multiplier": 1.0,
+    "samples": {},
+    "avg_latency_ms": 1000.0
   }
 }

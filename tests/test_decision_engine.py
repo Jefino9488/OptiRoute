@@ -71,7 +71,7 @@ def test_math_task_routes_to_cheapest(engine: DecisionEngine) -> None:
     decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
     # minimax-m3 is the cheapest that clears 0.75 accuracy threshold for math
-    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b")
+    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
     assert decision.predicted_accuracy >= 0.75
 
 
@@ -134,7 +134,7 @@ def test_regression_math_task_routes_to_llm(engine: DecisionEngine) -> None:
     decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
     assert not decision.model_selected.startswith("deterministic:")
-    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b")
+    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
     assert decision.predicted_accuracy >= 0.75
 
 
@@ -148,7 +148,7 @@ def test_regression_json_task_routes_to_llm(engine: DecisionEngine) -> None:
     decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
     assert not decision.model_selected.startswith("deterministic:")
-    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b", "kimi-k2p7-code")
+    assert decision.model_selected in ("minimax-m3", "local:qwen-2.5-3b", "kimi-k2p7-code", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
 
 
 def test_regression_haiku_routes_to_llm(engine: DecisionEngine) -> None:
