@@ -210,8 +210,17 @@ class BenchmarkRunner:
             Mapping of model_id → results.
         """
         settings = get_settings()
-        all_results: dict[str, list[BenchmarkResult]] = {}
+
+        # Local model first → validates llama-server is up before spending API tokens
+        models_to_test: list[str] = []
+        if settings.local_model_enabled:
+            models_to_test.append(settings.local_model_name)
         for model_id in settings.allowed_models:
+            if not model_id.startswith("local:"):
+                models_to_test.append(model_id)
+
+        all_results: dict[str, list[BenchmarkResult]] = {}
+        for model_id in models_to_test:
             logger.info("benchmark.model_start", model=model_id)
             results = await self.run_model(model_id, prompts)
             all_results[model_id] = results

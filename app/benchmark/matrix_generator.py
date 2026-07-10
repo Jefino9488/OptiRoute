@@ -27,6 +27,10 @@ _FAILURE_THRESHOLD: float = 0.5
 # Supports reasoning_effort parameter: "none", "low", "medium", "high", "max"
 # thinking_cost_multiplier: additional cost factor when thinking is enabled.
 MODEL_THINKING_PROPERTIES: dict[str, dict[str, Any]] = {
+    "local:qwen-2.5-3b": {
+        "supports_thinking": False,
+        "thinking_cost_multiplier": 1.0,
+    },
     "minimax-m3": {
         "supports_thinking": True,
         "thinking_cost_multiplier": 1.8,
@@ -34,10 +38,6 @@ MODEL_THINKING_PROPERTIES: dict[str, dict[str, Any]] = {
     "kimi-k2p7-code": {
         "supports_thinking": True,
         "thinking_cost_multiplier": 1.3,
-    },
-    "local:qwen-2.5-3b": {
-        "supports_thinking": False,
-        "thinking_cost_multiplier": 1.0,
     },
 }
 
@@ -83,7 +83,7 @@ class CapabilityMatrixGenerator:
         for model_id, results in all_results.items():
             self._evaluator.evaluate(results)
             scored_results.extend(results)
-            
+
             sample_counts[model_id] = {}
             for r in results:
                 sample_counts[model_id][r.category] = sample_counts[model_id].get(r.category, 0) + 1
@@ -103,7 +103,7 @@ class CapabilityMatrixGenerator:
 
         # Build updated matrix
         updated: dict[str, Any] = {}
-        
+
         # First, copy over existing models that weren't tested this time
         for model_id, data in existing_data.items():
             if model_id not in aggregated:
@@ -174,13 +174,13 @@ class CapabilityMatrixGenerator:
         self._matrix_path.parent.mkdir(parents=True, exist_ok=True)
         with self._matrix_path.open("w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
-            
+
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d")
         version_dir = self._matrix_path.parent / "benchmarks" / timestamp
         version_dir.mkdir(parents=True, exist_ok=True)
         with (version_dir / "capability_matrix.json").open("w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
-            
+
         logger.info("matrix_generator.saved", path=str(self._matrix_path))
         return data
 
@@ -222,20 +222,20 @@ class CapabilityMatrixGenerator:
             lines.append(f"### {category.capitalize()}\n")
             lines.append("| Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |")
             lines.append("|---|---|---|---|---|---|")
-            
+
             for model_id in sorted(by_category[category].keys()):
                 results = by_category[category][model_id]
                 accuracy = sum(r.score for r in results) / len(results)
                 avg_latency = sum(r.latency_ms for r in results) / len(results)
                 avg_out_tokens = sum(r.tokens_output for r in results) / len(results)
                 avg_cost = sum(r.cost for r in results) / len(results)
-                
+
                 # Recommended routing threshold
                 if accuracy < _FAILURE_THRESHOLD:
                     rec = "DO NOT ROUTE"
                 else:
                     rec = f">= {accuracy - 0.05:.2f}"
-                    
+
                 lines.append(f"| {model_id} | {accuracy:.2f} | {avg_latency:.0f}ms | {avg_out_tokens:.0f} | ${avg_cost:.6f} | {rec} |")
             lines.append("")
 

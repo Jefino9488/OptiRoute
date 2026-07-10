@@ -78,32 +78,36 @@ class Settings(BaseSettings):
         description="Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
 
-    # --- Local Model ---
+    # --- Local Model (llama-server HTTP API) ---
     local_model_enabled: bool = Field(
         default=True,
         description="Enable local model inference for $0 Fireworks token cost",
     )
     local_model_path: str = Field(
         default="models/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
-        description="Path to GGUF model weights file (Qwen2.5-3B-Instruct Q4_K_M)",
+        description="Path to GGUF model weights file served by llama-server",
     )
     local_model_name: str = Field(
         default="local:qwen-2.5-3b",
         description="Local model identifier in the capability matrix",
     )
     local_model_context_length: int = Field(
-        default=4096,
+        default=8192,
         ge=256,
         description="Max context window for local model (tokens)",
     )
     local_model_threads: int = Field(
         default=2,
         ge=1,
-        description="CPU threads for local model inference (match harness vCPU count)",
+        description="CPU threads for llama-server (match harness vCPU count)",
     )
     local_router_enabled: bool = Field(
-        default=True,
-        description="Use local LLM to make routing decisions (not just execution)",
+        default=False,
+        description="Use local LLM for routing decisions — disabled, heuristic engine used instead",
+    )
+    local_server_url: str = Field(
+        default="http://localhost:8080/v1",
+        description="Base URL of the llama-server HTTP API (OpenAI-compatible)",
     )
 
     model_config = {
