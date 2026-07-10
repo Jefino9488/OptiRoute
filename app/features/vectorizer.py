@@ -35,6 +35,9 @@ class TaskVector:
     extraction: float = 0.0
     retrieval: float = 0.0
     general_qa: float = 0.0
+    summarization: float = 0.0
+    sentiment: float = 0.0
+    ner: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
         """Serialise to a plain dict."""
@@ -75,6 +78,7 @@ class RiskVector:
 _DIMENSIONS: list[str] = [
     "math", "reasoning", "code", "creative",
     "translation", "extraction", "retrieval", "general_qa",
+    "summarization", "sentiment", "ner",
 ]
 
 # Which auxiliary dimensions get a moderate "related" boost for each
@@ -88,6 +92,9 @@ _RELATED: dict[str, list[str]] = {
     "extraction": ["reasoning"],
     "retrieval": ["general_qa"],
     "general_qa": ["reasoning", "retrieval"],
+    "summarization": ["reasoning", "general_qa"],
+    "sentiment": ["reasoning", "extraction"],
+    "ner": ["extraction", "retrieval"],
 }
 
 # Base output-token estimates per length category.
@@ -161,6 +168,12 @@ class TaskVectorGenerator:
             values["retrieval"] = max(values["retrieval"], moderate)
         if features.json_required and dominant != "extraction":
             values["extraction"] = max(values["extraction"], moderate)
+        if features.is_summarization and dominant != "summarization":
+            values["summarization"] = max(values["summarization"], moderate)
+        if features.is_sentiment and dominant != "sentiment":
+            values["sentiment"] = max(values["sentiment"], moderate)
+        if features.is_ner and dominant != "ner":
+            values["ner"] = max(values["ner"], moderate)
 
         # Clamp all values to [0, 1].
         for dim in _DIMENSIONS:

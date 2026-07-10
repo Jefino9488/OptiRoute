@@ -192,6 +192,7 @@ class TestToDict:
         assert set(d.keys()) == {
             "math", "reasoning", "code", "creative",
             "translation", "extraction", "retrieval", "general_qa",
+            "summarization", "sentiment", "ner",
         }
 
     def test_resource_vector_to_dict(self, gen: TaskVectorGenerator) -> None:
