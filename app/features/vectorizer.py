@@ -133,7 +133,7 @@ class TaskVectorGenerator:
         # Base values: dominant high, related moderate, others low.
         high = 0.7 + 0.25 * complexity   # 0.70 – 0.95
         moderate = 0.25 + 0.20 * complexity  # 0.25 – 0.45
-        low = 0.05
+        low = 0.0
 
         values: dict[str, float] = {}
         related_dims = _RELATED.get(dominant, [])
@@ -222,6 +222,6 @@ class TaskVectorGenerator:
         """Derive boolean risk flags from feature booleans."""
         return RiskVector(
             needs_json=features.json_required,
-            needs_high_accuracy=features.contains_code or features.contains_math,
-            strict_formatting=features.json_required,
+            needs_high_accuracy=features.contains_code or features.contains_math or features.has_strict_constraint,
+            strict_formatting=features.json_required or features.has_strict_constraint,
         )

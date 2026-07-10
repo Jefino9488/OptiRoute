@@ -24,6 +24,7 @@ from app.executors.fireworks import FireworksExecutor
 from app.features.extractor import FeatureExtractor
 from app.features.normalizer import RequestNormalizer
 from app.features.preprocessor import PromptPreprocessor
+from app.features.compiler import InferencePolicyCompiler
 from app.features.vectorizer import TaskVectorGenerator
 from app.metrics.collector import MetricsCollector, RequestMetric
 from app.router.capability_matrix import CapabilityMatrix
@@ -94,6 +95,7 @@ class RoutingPipeline:
         self._validator = ConfidenceValidator()
         self._metrics = MetricsCollector()
         self._preprocessor = PromptPreprocessor()
+        self._compiler = InferencePolicyCompiler()
 
     # ------------------------------------------------------------------
     # Public API
@@ -198,12 +200,30 @@ class RoutingPipeline:
         # Step 4: Decide model
         decision = await self._make_routing_decision(
             prompt=prompt,
+            features=features,
             task_dict=task_dict,
             resource_dict=resource_dict,
             risk_dict=risk_dict,
             required_accuracy=required_accuracy,
             force_model=force_model,
         )
+
+        # Step 4b: Compile System Prompt
+        # Preprocessor still runs for anti-hallucination guards (before any model executes)
+        preprocessed = await self._preprocessor.process(prompt=prompt)
+        base_system = "\n\n".join(preprocessed.system_addons)
+        
+        compiled_policy = self._compiler.compile(
+            prompt=prompt,
+            task_vector=task_dict,
+            resource_vector=resource_dict,
+            risk_vector=risk_dict,
+            model=decision.model_selected,
+            base_system_prompt=base_system,
+        )
+        
+        system_prompt = compiled_policy.system_prompt
+        # compiled_policy.user_prompt is strictly untouched, so we continue passing `prompt`.
 
         # Step 5: Execute
         escalation_depth = 0
@@ -217,6 +237,7 @@ class RoutingPipeline:
                 model_id=decision.model_selected,
                 features=features,
                 resource_dict=resource_dict,
+                system_prompt=system_prompt,
             )
             if local_result is not None:
                 best_result = local_result
@@ -251,34 +272,16 @@ class RoutingPipeline:
                 )
 
         # 5b: Fireworks execution (with escalation loop)
-        # Preprocess prompt once before the loop: compress tokens + inject
-        # anti-hallucination system prompt lines (false_memory, stale_knowledge, injection).
-        # Local model execution is never preprocessed — it always received the original.
-        preprocessed = await self._preprocessor.process(
-            prompt=prompt,
-            local_executor=self._local,
-        )
+        # Preprocessor has already run in Step 4b. We just use the compiled system_prompt.
+        # But wait, preprocessed.forwarded has the injection clauses stripped (if any).
+        # We must use the stripped prompt for Fireworks.
         if preprocessed.risk_flags:
             logger.info(
                 "pipeline.preprocessor_flags",
                 flags=list(preprocessed.risk_flags),
-                token_savings=preprocessed.token_savings,
             )
             
-        addons = preprocessed.system_addons.copy()
-        
-        # Add task-specific instruction
-        task_instr = self._get_task_instruction(features.task_type)
-        if task_instr:
-            addons.append(task_instr)
-            
-        # Add budget instruction
-        budget_bucket = resource_dict.get("output_budget_bucket", "medium")
-        budget_instr = self._get_budget_instruction(budget_bucket, features.task_type, prompt)
-        if budget_instr:
-            addons.append(budget_instr)
-            
-        fireworks_system_prompt = "\n\n".join(addons) or None
+        fireworks_system_prompt = system_prompt or None
 
         current_model = decision.model_selected
         while best_result is None or (
@@ -309,7 +312,15 @@ class RoutingPipeline:
                     current_model, eligible, escalation_depth,
                 )
                 if next_model is None:
-                    break
+                    # If eligible models were empty because of threshold/allowed filters,
+                    # force fallback to the frontier model as a last resort,
+                    # provided we haven't exceeded depth and haven't tried it yet.
+                    fallback_model = self._policy.get_fallback_model()
+                    if current_model != fallback_model and fallback_model in allowed and escalation_depth < self._policy.max_depth:
+                        next_model = fallback_model
+                        logger.warning("pipeline.forcing_fallback", model=fallback_model)
+                    else:
+                        break
                 current_model = next_model
                 escalation_depth += 1
                 escalated = True
@@ -319,16 +330,21 @@ class RoutingPipeline:
                     to_model=current_model,
                     depth=escalation_depth,
                 )
+                
+                # Upgrade reasoning effort on escalation if appropriate
+                if escalation_depth > 0 and reasoning_effort == "none" and features.task_type in ("reasoning", "creative", "extraction"):
+                    reasoning_effort = "low"
+                    logger.info("pipeline.upgrading_reasoning", model=current_model, task_type=features.task_type)
 
             # Skip local models in Fireworks loop
             if current_model.startswith("local:"):
                 break
 
-            max_retries = 2
-            # Thinking models (Minimax/Kimi) need huge output windows for their reasoning traces.
-            # We use resource_dict['output_tokens'] for cost estimation, but we give the API 
-            # much more headroom to prevent wasteful truncation retries.
-            current_max_tokens = max(resource_dict.get("output_tokens", 1024), 8192)
+            # Adaptive output budget based on task characteristics
+            base_output = max(resource_dict.get("output_tokens", 512), 256)
+            current_max_tokens = int(base_output)
+                
+            max_retries = 3
             for attempt in range(max_retries):
                 try:
                     result = await self._fireworks.execute(
@@ -350,16 +366,39 @@ class RoutingPipeline:
                     finish_reason = result.raw_metadata.get("finish_reason")
                     is_empty = not result.response.strip()
                     is_error = "[ERROR]" in result.response
+                    is_not_found = "[NOT_FOUND]" in result.response
+                    
+                    if is_not_found:
+                        logger.warning(
+                            "pipeline.model_not_found_bypassing",
+                            model=current_model,
+                        )
+                        break  # Break retry loop instantly to escalate
 
                     # Smarter retry policy
                     if finish_reason == "length":
+                        # If it hit the length limit because it's caught in an infinite loop,
+                        # don't waste tokens giving it a larger budget. Break and escalate.
+                        if self._validator._has_excessive_repetition(result.response):
+                            logger.warning(
+                                "pipeline.infinite_loop_detected",
+                                model=current_model,
+                                reason="length with repetition"
+                            )
+                            break
+                        
                         logger.warning(
                             "pipeline.transient_failure_retry",
                             model=current_model,
                             attempt=attempt + 1,
                             reason="length (increasing budget)"
                         )
-                        current_max_tokens *= 2 # Retry with a larger budget
+                        if attempt == 0:
+                            current_max_tokens = int(base_output * 1.5)
+                        elif attempt == 1:
+                            current_max_tokens = int(base_output * 2.0)
+                        else:
+                            break # Exceeded allowed budget growth, force escalation
                         continue
 
                     if is_empty or is_error:
@@ -455,6 +494,7 @@ class RoutingPipeline:
             "escalation_depth": escalation_depth,
             "task_vector": task_dict,
             "routing_explanation": decision.reasoning,
+            "compiler_metadata": compiled_policy.metadata,
         }
 
     # ------------------------------------------------------------------
@@ -514,54 +554,12 @@ class RoutingPipeline:
         code_weight = task_dict.get("code", 0.0)
         complexity = resource_dict.get("complexity", 0.0)
 
-        # High-value signals: deep reasoning, math proofs, complex code
-        needs_deep_thinking = (
-            reasoning_weight > 0.5
-            or (math_weight > 0.5 and reasoning_weight > 0.2)
-            or (code_weight > 0.5 and complexity > 0.5)
-            or (features.requires_reasoning and complexity > 0.6)
-        )
-
-        # Moderate signals: some reasoning, explanation requests
-        needs_light_thinking = (
-            reasoning_weight > 0.2
-            or features.requires_reasoning
-            or features.contains_math
-        )
-
-        if needs_deep_thinking:
-            # Log which condition triggered deep thinking
-            trigger = (
-                f"reasoning={reasoning_weight:.2f}>0.5"
-                if reasoning_weight > 0.5
-                else f"math={math_weight:.2f}>0.5 & reasoning={reasoning_weight:.2f}>0.2"
-                if math_weight > 0.5 and reasoning_weight > 0.2
-                else f"code={code_weight:.2f}>0.5 & complexity={complexity:.2f}>0.5"
-                if code_weight > 0.5 and complexity > 0.5
-                else f"requires_reasoning={features.requires_reasoning} & complexity={complexity:.2f}>0.6"
-            )
-            logger.info(
-                "pipeline.auto_thinking_high",
-                trigger=trigger,
-                reasoning=reasoning_weight,
-                math=math_weight,
-                code=code_weight,
-                complexity=complexity,
-                prompt_preview=prompt[:80],
-            )
-            return "high"
-        if needs_light_thinking:
-            # Log which condition triggered light thinking
-            trigger = (
-                f"reasoning={reasoning_weight:.2f}>0.2"
-                if reasoning_weight > 0.2
-                else f"requires_reasoning={features.requires_reasoning}"
-                if features.requires_reasoning
-                else f"contains_math={features.contains_math}"
-            )
+        # As per optimization plan, we restrict reasoning to Math and Code tasks natively.
+        # General reasoning tasks get "none" initially and escalate if they fail.
+        if math_weight > 0.5 or code_weight > 0.5:
             logger.info(
                 "pipeline.auto_thinking_low",
-                trigger=trigger,
+                trigger=f"math={math_weight:.2f} code={code_weight:.2f}",
                 reasoning=reasoning_weight,
                 math=math_weight,
                 complexity=complexity,
@@ -583,6 +581,7 @@ class RoutingPipeline:
     async def _make_routing_decision(
         self,
         prompt: str,
+        features: Any,
         task_dict: dict[str, float],
         resource_dict: dict[str, Any],
         risk_dict: dict[str, Any],
@@ -632,15 +631,49 @@ class RoutingPipeline:
                         reasoning=f"Local LLM router → {routed}",
                     )
 
-        # Level 3: Heuristic decision engine (fallback)
-        logger.info("pipeline.using_heuristic_engine")
-        return self._engine.select_model(
-            task_vector=task_dict,
-            resource_vector=resource_dict,
-            risk_vector=risk_dict,
-            required_accuracy=required_accuracy,
-            prompt=prompt,
-        )
+        # Dynamic required accuracy based on complexity and task type
+        base_accuracy = 0.75
+        complexity = resource_dict.get("complexity", 0.0)
+        
+        # Scale required accuracy based on complexity for ALL tasks (up to +0.20)
+        # This pushes it out of reach of the local model for tricky edge cases
+        base_accuracy += (0.20 * complexity)
+
+        # Code tasks require extreme precision (syntax, edge cases)
+        if features.task_type == "code":
+            base_accuracy += 0.15
+            
+        # The local model has suspiciously high offline scores for extraction/retrieval 
+        # (0.95+). We bump the requirement to ensure it only wins on simple prompts.
+        if features.task_type in ("extraction", "retrieval"):
+            base_accuracy += 0.15
+            
+        # If the risk vector detected strict constraints, bump requirement heavily
+        if risk_dict.get("strict_formatting") or risk_dict.get("needs_high_accuracy"):
+            base_accuracy += 0.15
+
+        # Cap at 0.97 to ensure we can force a fallback for extreme complexity.
+        # This prevents the local model (which has inflated 0.956+ scores for 
+        # extraction/retrieval) from qualifying when constraints are strict.
+        required_accuracy = min(base_accuracy, 0.97)
+
+        try:
+            decision = self._engine.select_model(
+                task_vector=task_dict,
+                resource_vector=resource_dict,
+                risk_vector=risk_dict,
+                required_accuracy=required_accuracy,
+                prompt=prompt,
+            )
+            return decision
+        except Exception:
+            # Fallback in case heuristic engine fails
+            return RoutingDecision(
+                model_selected=settings.fallback_model,
+                estimated_cost=0.0,
+                predicted_accuracy=1.0,
+                reasoning="Heuristic engine failure; defaulting to robust model",
+            )
 
     async def _try_local_execute(
         self,
@@ -648,6 +681,7 @@ class RoutingPipeline:
         model_id: str,
         features: Any,
         resource_dict: dict[str, Any],
+        system_prompt: str | None = None,
     ) -> ExecutionResult | None:
         """Try executing on the local model with context-length pre-check.
 
@@ -669,37 +703,16 @@ class RoutingPipeline:
             )
             return None  # Caller will fall through to Fireworks
 
-        # Output generation limit pre-check.
-        # If the task requires more tokens than the local model's max budget,
-        # skip local and fall through to Fireworks.
-        local_max_tokens = 2048  # matches the highest value in _MAX_TOKENS_MAP
-        est_output = resource_dict.get("output_tokens", local_max_tokens)
-        if est_output > local_max_tokens:
-            logger.info(
-                "pipeline.local_output_overflow",
-                est_output=est_output,
-                max_allowed=local_max_tokens,
-                model=model_id,
-            )
-            return None  # Caller will fall through to Fireworks
-
-        budget_bucket = resource_dict.get("output_budget_bucket", "medium")
-        
-        local_sys_parts = []
-        task_instr = self._get_task_instruction(features.task_type)
-        if task_instr:
-            local_sys_parts.append(task_instr)
-            
-        budget_instr = self._get_budget_instruction(budget_bucket, features.task_type, prompt)
-        if budget_instr:
-            local_sys_parts.append(budget_instr)
-            
-        local_system_prompt = "\n\n".join(local_sys_parts) if local_sys_parts else None
+        # Output generation limit pre-check is removed. 
+        # Even if a reasoning task is estimated to be long, we want the local $0 model
+        # to ATTEMPT it. If it fails or gets cut off, the confidence validator will catch
+        # it and it will escalate naturally. Bypassing it prematurely burns Fireworks tokens.
+        est_output = resource_dict.get("output_tokens", 256)
 
         result = await self._local.execute(
             prompt=prompt,
             task_type=features.task_type,
-            system_prompt=local_system_prompt,
+            system_prompt=system_prompt,
         )
 
         # Validate confidence
@@ -714,49 +727,7 @@ class RoutingPipeline:
 
         return result
 
-    def _get_task_instruction(self, task_type: str) -> str | None:
-        """Returns a task-specific behavioral instruction."""
-        instructions = {
-            "math": "Solve carefully. Verify the final calculation before responding. Return the final answer clearly.",
-            "code": "Write correct, runnable code. Check for syntax errors before finishing.",
-            "translation": "Translate faithfully. Preserve meaning and formatting. Do not add explanations.",
-            "extraction": "Return only the requested fields. Do not include commentary.",
-            "creative": "Follow all requested constraints (length, rhyme, format, style) before writing.",
-            "reasoning": "Reason internally and present only the necessary explanation. Avoid unnecessary verbosity.",
-            "retrieval": "Extract and synthesize only the relevant facts.",
-        }
-        return instructions.get(task_type)
 
-    def _get_budget_instruction(self, bucket: str, task_type: str, prompt_text: str) -> str | None:
-        """Returns a system prompt instruction based on expected output length and user intent."""
-        prompt_lower = prompt_text.lower()
-        
-        # 1. Respect explicit user requests for detail
-        detail_keywords = [
-            "explain in detail", "step by step", "comprehensive", 
-            "write an essay", "full implementation", "detailed"
-        ]
-        if any(kw in prompt_lower for kw in detail_keywords):
-            return "You are a helpful AI assistant. Provide a comprehensive answer as requested while avoiding repetition."
-            
-        # 2. Strict instructions for extraction/classification tasks (handled partially by task_instr now)
-        if task_type in ("extraction", "translation"):
-            return "You are a helpful AI assistant. Be extremely concise."
-            
-        # 3. Softened bucket-aware instructions
-        bucket = bucket.lower().replace("_", " ")
-        base = "You are a helpful AI assistant. "
-        
-        if bucket == "small":
-            return base + "Answer with only the information necessary to fully satisfy the request. Avoid introductions, conclusions, and unnecessary explanation."
-        elif bucket == "medium":
-            return base + "Be concise but complete. Avoid repetition and unnecessary detail."
-        elif bucket == "large":
-            return base + "Provide a complete answer. Avoid unnecessary verbosity or filler."
-        elif bucket == "very large":
-            return base + "Provide a comprehensive answer as requested while avoiding repetition."
-            
-        return base + "Answer with only the information necessary to fully satisfy the request."
 
     # ------------------------------------------------------------------
     # Accessors for the API layer
