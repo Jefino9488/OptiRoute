@@ -2,6 +2,7 @@
 """Run offline benchmarks to update the capability matrix."""
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path

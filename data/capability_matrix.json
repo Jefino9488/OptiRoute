@@ -55,7 +55,7 @@
     "cost_per_1k_input": 0.0002,
     "cost_per_1k_output": 0.0004,
     "avg_output_multiplier": 1.0,
-    "max_context": 256000,
+    "max_context": 4096,
     "fails_on": [
       "translation"
     ],
