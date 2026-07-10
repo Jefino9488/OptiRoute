@@ -1,9 +1,8 @@
 import re
 import structlog
+import httpx
 from typing import Optional
-from pathlib import Path
 from pydantic import BaseModel
-from llama_cpp import Llama
 
 logger = structlog.get_logger()
 
@@ -16,51 +15,45 @@ class MLRouterPrediction(BaseModel):
     justification: str
 
 class MLRouter:
-    """Wraps the Supra-Router-51M ML orchestrator model for fast local inference."""
+    """Wraps the Supra-Router-51M ML orchestrator model via llama-server HTTP API."""
     
-    def __init__(self, model_path: Path):
-        self._model_path = model_path
-        self._llm: Optional[Llama] = None
-        self._is_ready = False
+    def __init__(self, server_url: str = "http://localhost:8081/v1"):
+        self._server_url = server_url
+        self._client = httpx.Client(timeout=10.0)
+        self._is_ready = self._check_health()
         
-        self._initialize()
-        
-    def _initialize(self) -> None:
-        """Load the model synchronously into memory. Takes ~50ms for 51M model."""
-        if not self._model_path.exists():
-            logger.warning("ml_router.missing_model", path=str(self._model_path))
-            return
-            
+    def _check_health(self) -> bool:
+        """Ping llama-server health endpoint."""
         try:
-            # We initialize without heavy GPU offload since it's only 51M parameters
-            self._llm = Llama(
-                model_path=str(self._model_path),
-                n_ctx=4096,
-                verbose=False,
-            )
-            self._is_ready = True
-            logger.info("ml_router.initialized", path=str(self._model_path))
-        except Exception as e:
-            logger.error("ml_router.init_failed", error=str(e))
+            base = self._server_url.replace("/v1", "")
+            resp = self._client.get(f"{base}/health", timeout=2.0)
+            if resp.status_code == 200 and resp.json().get("status") == "ok":
+                return True
+        except Exception:
+            pass
+        logger.warning("ml_router.server_unavailable", url=self._server_url)
+        return False
             
     def predict(self, prompt: str) -> Optional[MLRouterPrediction]:
-        """Predict the route for a given prompt.
-        
-        Returns None if the router is not ready, or if the output is malformed.
-        """
-        if not self._is_ready or not self._llm:
+        """Predict the route for a given prompt."""
+        if not self._is_ready:
             return None
             
         formatted_prompt = f"Task: {prompt}\nAnalysis: "
         
         try:
-            output = self._llm(
-                formatted_prompt,
-                max_tokens=128,
-                temperature=0.0,
-                stop=["\n"],
+            resp = self._client.post(
+                f"{self._server_url}/completions",
+                json={
+                    "prompt": formatted_prompt,
+                    "max_tokens": 128,
+                    "temperature": 0.0,
+                    "stop": ["\n"]
+                }
             )
-            response_text = output["choices"][0]["text"].strip()
+            resp.raise_for_status()
+            data = resp.json()
+            response_text = data["choices"][0]["text"].strip()
             logger.debug("ml_router.raw_output", output=response_text)
             
             return self._parse_output(response_text)
@@ -77,7 +70,6 @@ class MLRouter:
         try:
             parts = [p.strip() for p in text.split("|")]
             
-            # Simple key-value extraction
             data = {}
             for part in parts:
                 if ":" in part:

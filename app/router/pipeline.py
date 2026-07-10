@@ -61,7 +61,7 @@ class RoutingPipeline:
         settings = get_settings()
         self._ml_router: MLRouter | None = None
         if settings.ml_router_enabled:
-            self._ml_router = MLRouter(settings.ml_router_model_path)
+            self._ml_router = MLRouter()
         self._policy = EscalationPolicy(
             max_depth=settings.max_escalation_depth,
             confidence_threshold=settings.confidence_threshold,

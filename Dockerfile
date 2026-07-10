@@ -110,7 +110,7 @@ ENV LOCAL_SERVER_URL=http://localhost:8080/v1
 
 # ── Entrypoint: start llama-server, wait until healthy, then run agent ─────────
 RUN printf '#!/bin/sh\n\
-echo "[startup] Launching llama-server..."\n\
+echo "[startup] Launching llama-server (local model)..."\n\
 llama-server \\\n\
   -m models/Qwen2.5-3B-Instruct-Q4_K_M.gguf \\\n\
   --port 8080 --host 0.0.0.0 \\\n\
@@ -122,17 +122,35 @@ llama-server \\\n\
   > /app/llama_server.log 2>&1 &\n\
 LLAMA_PID=$!\n\
 \n\
-echo "[startup] Waiting for llama-server to be ready (up to 60s)..."\n\
+echo "[startup] Launching llama-server (ml router)..."\n\
+llama-server \\\n\
+  -m models/Supra-Router-51M-Q4_K_M.gguf \\\n\
+  --port 8081 --host 0.0.0.0 \\\n\
+  --threads 1 -c 4096 \\\n\
+  -b 128 --ubatch-size 128 \\\n\
+  --cont-batching -np 1 \\\n\
+  --no-mmap \\\n\
+  --reasoning off \\\n\
+  > /app/router_server.log 2>&1 &\n\
+ROUTER_PID=$!\n\
+\n\
+echo "[startup] Waiting for llama-servers to be ready (up to 60s)..."\n\
 READY=0\n\
 for i in $(seq 1 60); do\n\
     if ! kill -0 $LLAMA_PID > /dev/null 2>&1; then\n\
-        echo "[startup] ERROR: llama-server process exited unexpectedly!"\n\
-        echo "[startup] --- llama-server logs ---"\n\
+        echo "[startup] ERROR: local model llama-server process exited unexpectedly!"\n\
+        echo "[startup] --- local model logs ---"\n\
         cat /app/llama_server.log\n\
         exit 1\n\
     fi\n\
-    if curl -sf http://localhost:8080/health > /dev/null 2>&1; then\n\
-        echo "[startup] llama-server ready after ${i}x2s"\n\
+    if ! kill -0 $ROUTER_PID > /dev/null 2>&1; then\n\
+        echo "[startup] ERROR: router llama-server process exited unexpectedly!"\n\
+        echo "[startup] --- router logs ---"\n\
+        cat /app/router_server.log\n\
+        exit 1\n\
+    fi\n\
+    if curl -sf http://localhost:8080/health > /dev/null 2>&1 && curl -sf http://localhost:8081/health > /dev/null 2>&1; then\n\
+        echo "[startup] llama-servers ready after ${i}x2s"\n\
         READY=1\n\
         break\n\
     fi\n\
