@@ -99,6 +99,8 @@ async def main() -> None:
     cost_total = 0.0
     local_count = 0
     fireworks_count = 0
+    total_fw_tokens = 0
+    cache_count = 0
 
     for i, task in enumerate(tasks):
         task_id: str = task.get("task_id", f"unknown-{i}")
@@ -140,12 +142,16 @@ async def main() -> None:
             task_cost = 0.0
             task_ms = (time.perf_counter() - t_task) * 1000
 
-        # Track stats
+        # --- Track stats ---
         cost_total += task_cost
+        fw_tokens = result.get("fireworks_tokens", 0) if isinstance(result, dict) else 0
+        total_fw_tokens += fw_tokens
         if model_used.startswith("local:") or model_used == "local":
             local_count += 1
         elif task_cost > 0:
             fireworks_count += 1
+        if isinstance(result, dict) and result.get("cache_hit"):
+            cache_count += 1
 
         print(
             f"[agent]   → model={model_used}, cost=${task_cost:.6f}, latency={task_ms:.0f}ms",
@@ -162,12 +168,17 @@ async def main() -> None:
     )
 
     total_s = time.perf_counter() - t_start
+    pct_local = (local_count / len(results) * 100) if results else 0
+    pct_fireworks = (fireworks_count / len(results) * 100) if results else 0
+    pct_cache = (cache_count / len(results) * 100) if results else 0
     print(
         f"\n[agent] ✓ Complete: {len(results)} tasks in {total_s:.1f}s\n"
-        f"[agent]   Local (free): {local_count}/{len(results)} tasks\n"
-        f"[agent]   Fireworks:    {fireworks_count}/{len(results)} tasks\n"
-        f"[agent]   Total cost:   ${cost_total:.6f}\n"
-        f"[agent]   Output:       {OUTPUT_PATH}",
+        f"[agent]   Local (free):      {local_count}/{len(results)} ({pct_local:.0f}%)\n"
+        f"[agent]   Fireworks:         {fireworks_count}/{len(results)} ({pct_fireworks:.0f}%)\n"
+        f"[agent]   Cache hits:        {cache_count}/{len(results)} ({pct_cache:.0f}%)\n"
+        f"[agent]   Fireworks tokens:  {total_fw_tokens:,} (scored)\n"
+        f"[agent]   Total cost:        ${cost_total:.6f}\n"
+        f"[agent]   Output:            {OUTPUT_PATH}",
         flush=True,
     )
 
