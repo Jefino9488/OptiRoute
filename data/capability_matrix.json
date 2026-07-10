@@ -1,21 +1,29 @@
 {
   "local:qwen-2.5-3b": {
     "capabilities": {
-      "math": 0.75,
-      "reasoning": 0.704,
-      "code": 0.93,
-      "creative": 0.6,
-      "translation": 0.3458,
-      "extraction": 0.9563,
-      "retrieval": 0.96,
-      "general_qa": 0.7958
+      "math": 0.42,
+      "reasoning": 0.40,
+      "code": 0.88,
+      "creative": 0.55,
+      "translation": 0.20,
+      "extraction": 0.45,
+      "retrieval": 0.60,
+      "general_qa": 0.60,
+      "summarization": 0.65,
+      "sentiment": 0.35,
+      "ner": 0.50
     },
-    "cost_per_1k_input": 0.0002,
-    "cost_per_1k_output": 0.0004,
+    "cost_per_1k_input": 0.0,
+    "cost_per_1k_output": 0.0,
     "avg_output_multiplier": 1.0,
-    "max_context": 4096,
+    "max_context": 8192,
     "fails_on": [
-      "translation"
+      "translation",
+      "sentiment",
+      "extraction",
+      "math",
+      "reasoning",
+      "ner"
     ],
     "supports_thinking": false,
     "thinking_cost_multiplier": 1.0,
@@ -33,22 +41,23 @@
   },
   "minimax-m3": {
     "capabilities": {
-      "math": 0.9,
+      "math": 0.92,
       "reasoning": 0.8457,
       "code": 0.97,
       "creative": 0.7357,
-      "translation": 0.3026,
-      "extraction": 0.5042,
-      "retrieval": 0.64,
-      "general_qa": 0.7356
+      "translation": 0.85,
+      "extraction": 0.90,
+      "retrieval": 0.82,
+      "general_qa": 0.88,
+      "summarization": 0.90,
+      "sentiment": 0.92,
+      "ner": 0.88
     },
     "cost_per_1k_input": 0.0003,
     "cost_per_1k_output": 0.0012,
     "avg_output_multiplier": 1.0,
     "max_context": 512000,
-    "fails_on": [
-      "translation"
-    ],
+    "fails_on": [],
     "supports_thinking": true,
     "thinking_cost_multiplier": 1.8,
     "samples": {
@@ -65,14 +74,17 @@
   },
   "kimi-k2p7-code": {
     "capabilities": {
-      "math": 0.9,
-      "reasoning": 0.8336,
-      "code": 0.9675,
+      "math": 0.94,
+      "reasoning": 0.8836,
+      "code": 0.9775,
       "creative": 0.7214,
       "translation": 0.3022,
-      "extraction": 0.7,
+      "extraction": 0.80,
       "retrieval": 0.48,
-      "general_qa": 0.6461
+      "general_qa": 0.6461,
+      "summarization": 0.82,
+      "sentiment": 0.82,
+      "ner": 0.78
     },
     "cost_per_1k_input": 0.00095,
     "cost_per_1k_output": 0.004,
@@ -95,68 +107,5 @@
       "translation": 12
     },
     "avg_latency_ms": 2973.9
-  },
-  "gemma-4-31b-it": {
-    "capabilities": {
-      "math": 0.85,
-      "reasoning": 0.82,
-      "code": 0.85,
-      "creative": 0.7,
-      "translation": 0.3,
-      "extraction": 0.85,
-      "retrieval": 0.8,
-      "general_qa": 0.82
-    },
-    "cost_per_1k_input": 0.00015,
-    "cost_per_1k_output": 0.0006,
-    "avg_output_multiplier": 1.0,
-    "max_context": 8192,
-    "fails_on": ["translation"],
-    "supports_thinking": false,
-    "thinking_cost_multiplier": 1.0,
-    "samples": {},
-    "avg_latency_ms": 1500.0
-  },
-  "gemma-4-31b-it-nvfp4": {
-    "capabilities": {
-      "math": 0.80,
-      "reasoning": 0.80,
-      "code": 0.80,
-      "creative": 0.65,
-      "translation": 0.25,
-      "extraction": 0.80,
-      "retrieval": 0.75,
-      "general_qa": 0.78
-    },
-    "cost_per_1k_input": 0.0001,
-    "cost_per_1k_output": 0.0004,
-    "avg_output_multiplier": 1.0,
-    "max_context": 8192,
-    "fails_on": ["translation"],
-    "supports_thinking": false,
-    "thinking_cost_multiplier": 1.0,
-    "samples": {},
-    "avg_latency_ms": 1200.0
-  },
-  "gemma-4-26b-a4b-it": {
-    "capabilities": {
-      "math": 0.75,
-      "reasoning": 0.75,
-      "code": 0.75,
-      "creative": 0.60,
-      "translation": 0.2,
-      "extraction": 0.75,
-      "retrieval": 0.70,
-      "general_qa": 0.75
-    },
-    "cost_per_1k_input": 0.00005,
-    "cost_per_1k_output": 0.0002,
-    "avg_output_multiplier": 1.0,
-    "max_context": 8192,
-    "fails_on": ["translation"],
-    "supports_thinking": false,
-    "thinking_cost_multiplier": 1.0,
-    "samples": {},
-    "avg_latency_ms": 1000.0
   }
 }

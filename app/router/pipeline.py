@@ -97,6 +97,9 @@ class RoutingPipeline:
         self._preprocessor = PromptPreprocessor()
         self._compiler = InferencePolicyCompiler()
 
+        # Dynamic model availability — lazy-probed on first route()
+        self._models_probed = False
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -128,6 +131,9 @@ class RoutingPipeline:
         """
         pipeline_start = time.perf_counter()
 
+        # Step 0: Probe available Fireworks models (lazy, once)
+        await self._ensure_models_probed()
+
         # Step 1: Normalise
         normalized = self._normalizer.normalize(prompt)
         raw_hash = hashlib.sha256(prompt.encode()).hexdigest()
@@ -144,6 +150,8 @@ class RoutingPipeline:
                 cost=0.0,
                 latency_ms=round(elapsed, 1),
                 confidence=cached.confidence,
+                fireworks_tokens=0,
+                routing_path="cache",
             ))
             return {
                 "response": cached.response,
@@ -156,6 +164,7 @@ class RoutingPipeline:
                 "escalation_depth": 0,
                 "task_vector": cached.task_vector,
                 "routing_explanation": f"Cache hit ({cache_tier}). {cached.routing_explanation}",
+                "fireworks_tokens": 0,
             }
 
         # Step 3: Extract features + build vectors
@@ -242,7 +251,7 @@ class RoutingPipeline:
             if local_result is not None:
                 best_result = local_result
                 if local_result.confidence < self._policy.confidence_threshold:
-                    # Low confidence — escalate to cheapest Fireworks model
+                    # Low confidence — escalate to cheapest available Fireworks model
                     logger.info(
                         "pipeline.local_low_confidence_escalating",
                         confidence=local_result.confidence,
@@ -250,12 +259,13 @@ class RoutingPipeline:
                     )
                     escalated = True
                     escalation_depth += 1
-                    # Override decision to use Fireworks fallback
+                    # Use decision engine to pick cheapest Fireworks model for this task
+                    fb_model = self._engine.fallback_model
                     decision = RoutingDecision(
-                        model_selected="minimax-m3",
+                        model_selected=fb_model,
                         estimated_cost=0.0,
                         predicted_accuracy=0.9,
-                        reasoning="Escalated from local due to low confidence",
+                        reasoning=f"Escalated from local due to low confidence → {fb_model}",
                     )
                     best_result = None  # will be set by Fireworks loop below
             else:
@@ -264,11 +274,12 @@ class RoutingPipeline:
                     "pipeline.local_skipped_fallback_fireworks",
                     model=decision.model_selected,
                 )
+                fb_model = self._engine.fallback_model
                 decision = RoutingDecision(
-                    model_selected="minimax-m3",
+                    model_selected=fb_model,
                     estimated_cost=0.0,
                     predicted_accuracy=0.9,
-                    reasoning="Local skipped due to output overflow, routing to Fireworks",
+                    reasoning=f"Local skipped due to output overflow → {fb_model}",
                 )
 
         # 5b: Fireworks execution (with escalation loop)
@@ -342,6 +353,12 @@ class RoutingPipeline:
 
             # Adaptive output budget based on task characteristics
             base_output = max(resource_dict.get("output_tokens", 512), 256)
+            
+            # If thinking mode is enabled, it consumes a lot of tokens in the 
+            # <thought> block. We must provide a significantly larger budget.
+            if reasoning_effort != "none":
+                base_output = max(base_output * 2, 4096)
+                
             current_max_tokens = int(base_output)
                 
             max_retries = 3
@@ -375,8 +392,19 @@ class RoutingPipeline:
                         )
                         break  # Break retry loop instantly to escalate
 
-                    # Smarter retry policy
+                        # Smarter retry policy
                     if finish_reason == "length":
+                        # If we're in thinking mode, hitting the length limit means the 
+                        # model is likely caught in an infinite thinking loop. Retrying 
+                        # just wastes massive amounts of tokens. Escalate instead.
+                        if reasoning_effort != "none":
+                            logger.warning(
+                                "pipeline.thinking_length_limit_escalating",
+                                model=current_model,
+                                tokens=current_max_tokens
+                            )
+                            break
+                            
                         # If it hit the length limit because it's caught in an infinite loop,
                         # don't waste tokens giving it a larger budget. Break and escalate.
                         if self._validator._has_excessive_repetition(result.response):
@@ -469,6 +497,10 @@ class RoutingPipeline:
         )
 
         # Step 8: Log metrics
+        is_local = best_result.model_used.startswith("local:") or best_result.model_used == "local"
+        fw_tokens = 0 if is_local else (best_result.tokens_input + best_result.tokens_output)
+        routing_path = "local" if is_local else f"fireworks:{best_result.model_used}"
+
         self._metrics.record(RequestMetric(
             prompt_hash=normalized.prompt_hash,
             model_used=best_result.model_used,
@@ -481,7 +513,16 @@ class RoutingPipeline:
             cache_hit=False,
             escalated=escalated,
             escalation_depth=escalation_depth,
+            fireworks_tokens=fw_tokens,
+            routing_path=routing_path,
         ))
+
+        # Estimate what frontier-only would have cost (for analytics)
+        frontier_cost = self._matrix.estimate_cost(
+            "minimax-m3",
+            best_result.tokens_input or resource_dict.get("input_tokens", 500),
+            best_result.tokens_output or resource_dict.get("output_tokens", 300),
+        ) or 0.0
 
         return {
             "response": best_result.response,
@@ -495,7 +536,128 @@ class RoutingPipeline:
             "task_vector": task_dict,
             "routing_explanation": decision.reasoning,
             "compiler_metadata": compiled_policy.metadata,
+            "fireworks_tokens": fw_tokens,
+            "tokens_saved_vs_frontier": round(max(0.0, frontier_cost - best_result.cost), 8),
         }
+
+    # ------------------------------------------------------------------
+    # Dynamic model availability probing
+    # ------------------------------------------------------------------
+
+    async def _ensure_models_probed(self) -> None:
+        """Probe Fireworks model availability once on first route() call.
+
+        Uses the OpenAI-compatible ``/models`` endpoint to check which
+        ``ALLOWED_MODELS`` are actually callable.  Models that return 404
+        (e.g. Gemma on-demand-only) are excluded from routing decisions.
+        """
+        if self._models_probed:
+            return
+        self._models_probed = True
+
+        settings = get_settings()
+        allowed = settings.allowed_models  # dict: short_id -> full path
+
+        if not allowed:
+            logger.warning("pipeline.no_allowed_models_configured")
+            return
+
+        available: set[str] = set()
+        try:
+            available = await self._probe_fireworks_models(allowed)
+        except Exception as exc:
+            logger.warning(
+                "pipeline.model_probe_failed",
+                error=str(exc),
+                hint="All allowed models will be assumed available",
+            )
+            # On failure, assume all allowed models are available
+            available = set(allowed.keys())
+
+        # Ensure dynamic capability entries exist for all available models
+        for model_id in available:
+            self._matrix.get_or_create_model_capabilities(model_id)
+
+        self._engine.set_available_models(available)
+        logger.info(
+            "pipeline.models_probed",
+            available=sorted(available),
+            total_allowed=len(allowed),
+        )
+
+    async def _probe_fireworks_models(
+        self,
+        allowed: dict[str, str],
+    ) -> set[str]:
+        """Probe which allowed models are callable on Fireworks.
+
+        Sends a minimal completions request to each allowed model.
+        Models that respond (even with an error about content) are
+        considered available.  Models that return 404 are excluded.
+
+        Parameters
+        ----------
+        allowed : dict[str, str]
+            Mapping of short_id → full Fireworks model path.
+
+        Returns
+        -------
+        set[str]
+            Short IDs of models confirmed available.
+        """
+        import httpx
+
+        settings = get_settings()
+        base_url = settings.fireworks_base_url.rstrip("/")
+        headers = {
+            "Authorization": f"Bearer {settings.fireworks_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        available: set[str] = set()
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            for short_id, full_path in allowed.items():
+                if short_id.startswith("local:") or short_id == "local":
+                    # Local models are checked synchronously during initialization
+                    available.add(short_id)
+                    continue
+                    
+                try:
+                    # Use a minimal completions probe (max_tokens=1)
+                    resp = await client.post(
+                        f"{base_url}/chat/completions",
+                        headers=headers,
+                        json={
+                            "model": full_path,
+                            "messages": [{"role": "user", "content": "hi"}],
+                            "max_tokens": 1,
+                        },
+                    )
+                    if resp.status_code == 404:
+                        logger.info(
+                            "pipeline.model_not_available",
+                            model=short_id,
+                            status=resp.status_code,
+                        )
+                        continue
+                    # Any non-404 response means the model exists
+                    available.add(short_id)
+                    logger.info(
+                        "pipeline.model_available",
+                        model=short_id,
+                        status=resp.status_code,
+                    )
+                except Exception as exc:
+                    # Network error — assume available to avoid false negatives
+                    logger.warning(
+                        "pipeline.model_probe_error",
+                        model=short_id,
+                        error=str(exc),
+                    )
+                    available.add(short_id)
+
+        return available
 
     # ------------------------------------------------------------------
     # Internal routing decision
@@ -631,31 +793,13 @@ class RoutingPipeline:
                         reasoning=f"Local LLM router → {routed}",
                     )
 
-        # Dynamic required accuracy based on complexity and task type
-        base_accuracy = 0.75
+        # Dynamic required accuracy based on complexity only.
+        # The capability matrix scores should drive routing, not hacked thresholds.
+        base_accuracy = 0.70  # Lowered from 0.75 to allow reasoning scores (typically ~0.84) to pass
         complexity = resource_dict.get("complexity", 0.0)
-        
-        # Scale required accuracy based on complexity for ALL tasks (up to +0.20)
-        # This pushes it out of reach of the local model for tricky edge cases
-        base_accuracy += (0.20 * complexity)
 
-        # Code tasks require extreme precision (syntax, edge cases)
-        if features.task_type == "code":
-            base_accuracy += 0.15
-            
-        # The local model has suspiciously high offline scores for extraction/retrieval 
-        # (0.95+). We bump the requirement to ensure it only wins on simple prompts.
-        if features.task_type in ("extraction", "retrieval"):
-            base_accuracy += 0.15
-            
-        # If the risk vector detected strict constraints, bump requirement heavily
-        if risk_dict.get("strict_formatting") or risk_dict.get("needs_high_accuracy"):
-            base_accuracy += 0.15
-
-        # Cap at 0.97 to ensure we can force a fallback for extreme complexity.
-        # This prevents the local model (which has inflated 0.956+ scores for 
-        # extraction/retrieval) from qualifying when constraints are strict.
-        required_accuracy = min(base_accuracy, 0.97)
+        # Scale by complexity (0.0→0.70, 0.5→0.775, 1.0→0.85)
+        required_accuracy = min(base_accuracy + 0.15 * complexity, 0.90)
 
         try:
             decision = self._engine.select_model(
@@ -690,8 +834,8 @@ class RoutingPipeline:
         assert self._local is not None
 
         # Context length pre-check
-        model_entry = self._matrix.get_model_capabilities(model_id) or {}
-        max_ctx = model_entry.get("max_context", 4096)
+        model_entry = self._matrix.get_or_create_model_capabilities(model_id)
+        max_ctx = model_entry.get("max_context", 8192)
         est_tokens = resource_dict.get("input_tokens", 0)
 
         if est_tokens > max_ctx * 0.9:

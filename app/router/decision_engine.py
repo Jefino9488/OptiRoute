@@ -72,6 +72,51 @@ class DecisionEngine:
 
     def __init__(self, capability_matrix: CapabilityMatrix) -> None:
         self._matrix: CapabilityMatrix = capability_matrix
+        # Set of model IDs confirmed callable at runtime (empty = no filtering)
+        self._available_models: set[str] = set()
+
+    def set_available_models(self, available: set[str]) -> None:
+        """Update the set of models confirmed callable at runtime.
+
+        Call this after probing the Fireworks /models endpoint at startup.
+        Models not in this set are excluded from routing decisions.
+        Local models (prefix ``local:``) are always included regardless.
+
+        Parameters
+        ----------
+        available : set[str]
+            Model IDs confirmed available (short IDs, e.g. ``"minimax-m3"``).
+        """
+        self._available_models = available
+        logger.info(
+            "decision_engine.available_models_updated",
+            count=len(available),
+            models=sorted(available),
+        )
+
+    @property
+    def fallback_model(self) -> str:
+        """Return the best available Fireworks model for use as fallback.
+
+        Selects the model with the highest ``general_qa`` capability score
+        from the currently available (probed) set. Falls back to
+        ``minimax-m3`` if nothing is available.
+        """
+        fireworks_available = {
+            m for m in self._available_models if not m.startswith("local:")
+        }
+        if not fireworks_available:
+            return _FALLBACK_MODEL
+
+        best: str = _FALLBACK_MODEL
+        best_score: float = -1.0
+        for model_id in fireworks_available:
+            entry = self._matrix.get_or_create_model_capabilities(model_id)
+            score = entry.get("capabilities", {}).get("general_qa", 0.0)
+            if score > best_score:
+                best_score = score
+                best = model_id
+        return best
 
     # ------------------------------------------------------------------
     # Public API
@@ -104,23 +149,40 @@ class DecisionEngine:
         RoutingDecision
         """
         dominant_task = self._get_dominant_task(task_vector)
-        all_models = self._matrix.get_all_models()
-        allowed_models = set(get_settings().allowed_models.keys())
-        
-        candidates = [m for m in all_models if m in allowed_models or m.startswith("local:")]
+        settings = get_settings()
+        allowed_models = set(settings.allowed_models.keys())
+
+        # Combine: matrix models + any models probed at runtime that are allowed
+        matrix_models = set(self._matrix.get_all_models())
+        # Add any allowed models not yet in matrix (generate defaults on access)
+        all_candidate_ids = (allowed_models | matrix_models) | {
+            m for m in self._available_models if not m.startswith("local:")
+        }
+        # Always include local models
+        local_models = {m for m in matrix_models if m.startswith("local:")}
+        all_candidate_ids |= local_models
+
+        # Filter by allowed + runtime-available (local always passes)
+        candidates: list[str] = []
+        for model_id in all_candidate_ids:
+            is_local = model_id.startswith("local:")
+            in_allowed = model_id in allowed_models
+            in_available = model_id in self._available_models
+            # Accept if: local model, OR (in allowed_models AND (available or not yet probed))
+            if is_local or (in_allowed and (in_available or not self._available_models)):
+                candidates.append(model_id)
 
         logger.info(
             "decision_engine.filtering",
             dominant_task=dominant_task,
             candidates=candidates,
+            available_probed=len(self._available_models),
         )
 
         # Step 1: Filter out models that are known to fail on the dominant task
         filtered_candidates: list[str] = []
         for model_id in candidates:
-            entry = self._matrix.get_model_capabilities(model_id)
-            if entry is None:
-                continue
+            entry = self._matrix.get_or_create_model_capabilities(model_id)
             fails_on: list[str] = entry.get("fails_on", [])
             if dominant_task in fails_on:
                 logger.info(
@@ -132,15 +194,46 @@ class DecisionEngine:
             filtered_candidates.append(model_id)
 
         # Step 2 + 3: Compute weighted accuracy and filter by threshold
+        complexity = resource_vector.get("complexity", 0.0)
         eligible: list[dict[str, Any]] = []
         for model_id in filtered_candidates:
-            entry = self._matrix.get_model_capabilities(model_id)
-            if entry is None:
-                continue
+            entry = self._matrix.get_or_create_model_capabilities(model_id)
             accuracy = self._compute_weighted_accuracy(
                 task_vector, entry.get("capabilities", {})
             )
-            if accuracy >= required_accuracy:
+            # Apply a complexity cliff penalty for local 3B models.
+            # At complexity > 0.5 these models saturate their working memory
+            # and fail on multi-hop arithmetic and compositional reasoning.
+            if model_id.startswith("local:") and complexity > 0.5:
+                penalty = 0.75 - 0.5 * max(0.0, complexity - 0.5)  # 0.75x at 0.5, 0.5x at 1.0
+                accuracy *= max(penalty, 0.50)
+                logger.info(
+                    "decision_engine.local_complexity_penalty",
+                    model=model_id,
+                    complexity=complexity,
+                    penalty_factor=round(max(penalty, 0.50), 3),
+                    adjusted_accuracy=round(accuracy, 4),
+                )
+            # Apply cost-accuracy tradeoff:
+            # For free models (cost=0), if they are reliable at the dominant task (>0.75),
+            # tolerate a slightly lower weighted accuracy (up to 15% drop due to secondary tasks).
+            is_free = (entry.get("cost_per_1k_input", 1.0) == 0.0 and entry.get("cost_per_1k_output", 1.0) == 0.0)
+            dominant_cap = entry.get("capabilities", {}).get(dominant_task, 0.0)
+            
+            is_eligible = accuracy >= required_accuracy
+            if not is_eligible and is_free and dominant_cap > 0.75:
+                if accuracy >= required_accuracy * 0.85:
+                    is_eligible = True
+                    logger.info(
+                        "decision_engine.cost_accuracy_tradeoff",
+                        model=model_id,
+                        dominant_task=dominant_task,
+                        dominant_cap=dominant_cap,
+                        weighted_accuracy=round(accuracy, 4),
+                        required=round(required_accuracy, 4)
+                    )
+
+            if is_eligible:
                 eligible.append(
                     {
                         "model_id": model_id,
@@ -199,29 +292,30 @@ class DecisionEngine:
             return decision
 
         # Step 6: Fallback — no model met the threshold
+        # Use the dynamically selected best available model, not a hardcoded one
+        fb_model = self.fallback_model
         logger.warning(
             "decision_engine.fallback",
             required_accuracy=required_accuracy,
             dominant_task=dominant_task,
+            fallback_model=fb_model,
         )
-        fallback_entry = self._matrix.get_model_capabilities(_FALLBACK_MODEL)
-        fallback_accuracy = 0.0
-        if fallback_entry:
-            fallback_accuracy = self._compute_weighted_accuracy(
-                task_vector, fallback_entry.get("capabilities", {})
-            )
+        fallback_entry = self._matrix.get_or_create_model_capabilities(fb_model)
+        fallback_accuracy = self._compute_weighted_accuracy(
+            task_vector, fallback_entry.get("capabilities", {})
+        )
         fallback_cost = self._matrix.estimate_cost(
-            _FALLBACK_MODEL, input_tokens, output_tokens
+            fb_model, input_tokens, output_tokens
         ) or 0.0
 
         return RoutingDecision(
-            model_selected=_FALLBACK_MODEL,
+            model_selected=fb_model,
             estimated_cost=round(fallback_cost, 8),
             predicted_accuracy=round(fallback_accuracy, 6),
             reasoning=(
                 f"No model met accuracy threshold ({required_accuracy}) for "
-                f"dominant task '{dominant_task}'. Falling back to frontier model "
-                f"{_FALLBACK_MODEL}."
+                f"dominant task '{dominant_task}'. Falling back to best available "
+                f"model {fb_model}."
             ),
             alternatives_considered=[],
         )

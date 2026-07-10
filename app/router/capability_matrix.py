@@ -26,6 +26,9 @@ TASK_DIMENSIONS: list[str] = [
     "extraction",
     "retrieval",
     "general_qa",
+    "summarization",
+    "sentiment",
+    "ner",
 ]
 
 
@@ -95,6 +98,86 @@ class CapabilityMatrix:
         if entry is None:
             logger.warning("capability_matrix.model_not_found", model_id=model_id)
         return entry
+
+    def get_or_create_model_capabilities(
+        self,
+        model_id: str,
+    ) -> dict[str, Any]:
+        """Return capabilities for *model_id*, generating defaults if unknown.
+
+        If the model is not in the matrix, a conservative default profile
+        is auto-generated based on naming heuristics (e.g. 'code' in name
+        boosts code capability).
+
+        Parameters
+        ----------
+        model_id : str
+            Short model identifier.
+
+        Returns
+        -------
+        dict
+            Model entry (may be auto-generated).
+        """
+        entry = self._data.get(model_id)
+        if entry is not None:
+            return entry
+
+        # Generate conservative defaults
+        default = self._generate_default_entry(model_id)
+        self._data[model_id] = default
+        logger.info(
+            "capability_matrix.generated_default",
+            model_id=model_id,
+            capabilities=default["capabilities"],
+        )
+        return default
+
+    def _generate_default_entry(self, model_id: str) -> dict[str, Any]:
+        """Create a conservative capability profile for an unknown model.
+
+        Uses naming heuristics:
+        - ``"code"`` in name → boost code capability
+        - ``"mini"`` / small param indicators → lower general scores
+        - Default cost: mid-range estimate between minimax and kimi
+        """
+        name_lower = model_id.lower()
+
+        # Start with conservative baseline (below benchmarked models)
+        base_score = 0.65
+        caps: dict[str, float] = {dim: base_score for dim in TASK_DIMENSIONS}
+
+        # Heuristic boosts from model name
+        if "code" in name_lower:
+            caps["code"] = 0.85
+            caps["reasoning"] = 0.80
+        if "math" in name_lower or "reason" in name_lower:
+            caps["math"] = 0.80
+            caps["reasoning"] = 0.82
+        if "mini" in name_lower or "small" in name_lower:
+            # Smaller models get slightly lower scores
+            caps = {k: min(v, 0.60) for k, v in caps.items()}
+
+        # Cost defaults — mid-range (between minimax and kimi)
+        cost_input = 0.0005
+        cost_output = 0.002
+        if "nvfp4" in name_lower or "quant" in name_lower:
+            cost_input *= 0.7  # quantized models are typically cheaper
+            cost_output *= 0.7
+
+        return {
+            "capabilities": caps,
+            "cost_per_1k_input": cost_input,
+            "cost_per_1k_output": cost_output,
+            "avg_output_multiplier": 1.0,
+            "max_context": 128000,
+            "fails_on": [],
+            "supports_thinking": False,
+            "thinking_cost_multiplier": 1.0,
+            "samples": {},
+            "avg_latency_ms": 3000.0,
+            "_auto_generated": True,
+        }
 
     def get_all_models(self) -> list[str]:
         """Return a list of all model IDs in the matrix."""
