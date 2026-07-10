@@ -264,7 +264,21 @@ class RoutingPipeline:
                 flags=list(preprocessed.risk_flags),
                 token_savings=preprocessed.token_savings,
             )
-        fireworks_system_prompt = "\n".join(preprocessed.system_addons) or None
+            
+        addons = preprocessed.system_addons.copy()
+        
+        # Add task-specific instruction
+        task_instr = self._get_task_instruction(features.task_type)
+        if task_instr:
+            addons.append(task_instr)
+            
+        # Add budget instruction
+        budget_bucket = resource_dict.get("output_budget_bucket", "medium")
+        budget_instr = self._get_budget_instruction(budget_bucket, features.task_type, prompt)
+        if budget_instr:
+            addons.append(budget_instr)
+            
+        fireworks_system_prompt = "\n\n".join(addons) or None
 
         current_model = decision.model_selected
         while best_result is None or (
@@ -669,9 +683,23 @@ class RoutingPipeline:
             )
             return None  # Caller will fall through to Fireworks
 
+        budget_bucket = resource_dict.get("output_budget_bucket", "medium")
+        
+        local_sys_parts = []
+        task_instr = self._get_task_instruction(features.task_type)
+        if task_instr:
+            local_sys_parts.append(task_instr)
+            
+        budget_instr = self._get_budget_instruction(budget_bucket, features.task_type, prompt)
+        if budget_instr:
+            local_sys_parts.append(budget_instr)
+            
+        local_system_prompt = "\n\n".join(local_sys_parts) if local_sys_parts else None
+
         result = await self._local.execute(
             prompt=prompt,
             task_type=features.task_type,
+            system_prompt=local_system_prompt,
         )
 
         # Validate confidence
@@ -685,6 +713,50 @@ class RoutingPipeline:
         result.confidence = min(result.confidence, validation.confidence)
 
         return result
+
+    def _get_task_instruction(self, task_type: str) -> str | None:
+        """Returns a task-specific behavioral instruction."""
+        instructions = {
+            "math": "Solve carefully. Verify the final calculation before responding. Return the final answer clearly.",
+            "code": "Write correct, runnable code. Check for syntax errors before finishing.",
+            "translation": "Translate faithfully. Preserve meaning and formatting. Do not add explanations.",
+            "extraction": "Return only the requested fields. Do not include commentary.",
+            "creative": "Follow all requested constraints (length, rhyme, format, style) before writing.",
+            "reasoning": "Reason internally and present only the necessary explanation. Avoid unnecessary verbosity.",
+            "retrieval": "Extract and synthesize only the relevant facts.",
+        }
+        return instructions.get(task_type)
+
+    def _get_budget_instruction(self, bucket: str, task_type: str, prompt_text: str) -> str | None:
+        """Returns a system prompt instruction based on expected output length and user intent."""
+        prompt_lower = prompt_text.lower()
+        
+        # 1. Respect explicit user requests for detail
+        detail_keywords = [
+            "explain in detail", "step by step", "comprehensive", 
+            "write an essay", "full implementation", "detailed"
+        ]
+        if any(kw in prompt_lower for kw in detail_keywords):
+            return "You are a helpful AI assistant. Provide a comprehensive answer as requested while avoiding repetition."
+            
+        # 2. Strict instructions for extraction/classification tasks (handled partially by task_instr now)
+        if task_type in ("extraction", "translation"):
+            return "You are a helpful AI assistant. Be extremely concise."
+            
+        # 3. Softened bucket-aware instructions
+        bucket = bucket.lower().replace("_", " ")
+        base = "You are a helpful AI assistant. "
+        
+        if bucket == "small":
+            return base + "Answer with only the information necessary to fully satisfy the request. Avoid introductions, conclusions, and unnecessary explanation."
+        elif bucket == "medium":
+            return base + "Be concise but complete. Avoid repetition and unnecessary detail."
+        elif bucket == "large":
+            return base + "Provide a complete answer. Avoid unnecessary verbosity or filler."
+        elif bucket == "very large":
+            return base + "Provide a comprehensive answer as requested while avoiding repetition."
+            
+        return base + "Answer with only the information necessary to fully satisfy the request."
 
     # ------------------------------------------------------------------
     # Accessors for the API layer
