@@ -30,6 +30,7 @@ from app.metrics.collector import MetricsCollector, RequestMetric
 from app.router.capability_matrix import CapabilityMatrix
 from app.router.decision_engine import DecisionEngine, RoutingDecision
 from app.router.policy import EscalationPolicy
+from app.router.supra_router import SupraRouter
 
 logger = structlog.get_logger(__name__)
 
@@ -97,6 +98,20 @@ class RoutingPipeline:
         self._preprocessor = PromptPreprocessor()
         self._compiler = InferencePolicyCompiler()
 
+        # Supra-Router-51M (ML-based routing)
+        self._supra_router: SupraRouter | None = None
+        if settings.supra_router_enabled:
+            try:
+                self._supra_router = SupraRouter(
+                    server_url=settings.supra_router_url,
+                )
+                logger.info(
+                    "pipeline.supra_router_enabled",
+                    url=settings.supra_router_url,
+                )
+            except Exception:
+                logger.warning("pipeline.supra_router_init_failed")
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -148,6 +163,8 @@ class RoutingPipeline:
             return {
                 "response": cached.response,
                 "model_used": cached.model_used,
+                "tokens_input": 0,
+                "tokens_output": 0,
                 "cost": 0.0,
                 "latency_ms": round(elapsed, 1),
                 "confidence": cached.confidence,
@@ -159,8 +176,36 @@ class RoutingPipeline:
             }
 
         # Step 3: Extract features + build vectors
-        features = self._extractor.extract(prompt)
+        # Run SupraRouter first (ML-based); fall back to regex if unavailable.
+        supra_result = None
+        if self._supra_router is not None:
+            try:
+                supra_result = await self._supra_router.classify(prompt)
+            except Exception as exc:
+                logger.warning("pipeline.supra_router_error", error=str(exc))
+                supra_result = None
+
+        if supra_result is not None and supra_result.success:
+            # Build FeatureVector from ML output (no regex needed)
+            features = self._build_features_from_supra(prompt, supra_result)
+            logger.info(
+                "pipeline.supra_router_applied",
+                domain=supra_result.domain,
+                complexity=supra_result.complexity,
+                route=supra_result.route,
+                task_type=features.task_type,
+            )
+        else:
+            # Regex fallback when SupraRouter unavailable
+            features = self._extractor.extract(prompt)
+            logger.info("pipeline.regex_fallback")
+
         task_vec, resource_vec, risk_vec = self._vectorizer.generate(features)
+
+        # Step 3.5: Deterministic tool bypass (before any LLM call)
+        deterministic_result = self._try_deterministic(prompt, features)
+        if deterministic_result is not None:
+            return deterministic_result
 
         task_dict = task_vec.to_dict()
         _BUCKET_MAP = {
@@ -206,6 +251,7 @@ class RoutingPipeline:
             risk_dict=risk_dict,
             required_accuracy=required_accuracy,
             force_model=force_model,
+            supra_route=supra_result.route if supra_result else None,
         )
 
         # Step 4b: Compile System Prompt
@@ -229,6 +275,7 @@ class RoutingPipeline:
         escalation_depth = 0
         escalated = False
         best_result: ExecutionResult | None = None
+        length_exhausted = False  # Track if escalation was triggered by length exhaustion
 
         # 5a: Local model dispatch (when model_selected starts with "local:")
         if best_result is None and decision.model_selected.startswith("local:") and self._local:
@@ -336,15 +383,34 @@ class RoutingPipeline:
                     reasoning_effort = "low"
                     logger.info("pipeline.upgrading_reasoning", model=current_model, task_type=features.task_type)
 
+                # Reset length tracking for the new model's retry loop
+                length_exhausted = False
+                length_retry_count = 0
+
             # Skip local models in Fireworks loop
             if current_model.startswith("local:"):
                 break
 
             # Adaptive output budget based on task characteristics
-            base_output = max(resource_dict.get("output_tokens", 512), 256)
+            # Task-type minimums: reasoning/code/math/general_qa need more tokens
+            _TASK_MIN_TOKENS = {
+                "math": 1536,
+                "code": 2048,
+                "reasoning": 2048,
+                "general_qa": 1536,
+                "creative": 1024,
+                "extraction": 512,
+                "verification": 512,
+                "translation": 512,
+                "retrieval": 512,
+            }
+            raw_output = resource_dict.get("output_tokens", 1024)
+            task_min = _TASK_MIN_TOKENS.get(features.task_type, 512)
+            base_output = max(raw_output, task_min)
             current_max_tokens = int(base_output)
                 
-            max_retries = 3
+            max_retries = 2
+            length_retry_count = 0
             for attempt in range(max_retries):
                 try:
                     result = await self._fireworks.execute(
@@ -375,7 +441,7 @@ class RoutingPipeline:
                         )
                         break  # Break retry loop instantly to escalate
 
-                    # Smarter retry policy
+                    # Smarter retry policy: aggressive budget growth to avoid escalation
                     if finish_reason == "length":
                         # If it hit the length limit because it's caught in an infinite loop,
                         # don't waste tokens giving it a larger budget. Break and escalate.
@@ -387,27 +453,39 @@ class RoutingPipeline:
                             )
                             break
                         
+                        length_retry_count += 1
                         logger.warning(
                             "pipeline.transient_failure_retry",
                             model=current_model,
                             attempt=attempt + 1,
                             reason="length (increasing budget)"
                         )
-                        if attempt == 0:
-                            current_max_tokens = int(base_output * 1.5)
-                        elif attempt == 1:
-                            current_max_tokens = int(base_output * 2.0)
+                        if length_retry_count == 1:
+                            current_max_tokens = int(base_output * 2)
+                        elif length_retry_count == 2:
+                            current_max_tokens = int(base_output * 4)
                         else:
+                            length_exhausted = True
                             break # Exceeded allowed budget growth, force escalation
                         continue
 
                     if is_empty or is_error:
-                        logger.warning(
-                            "pipeline.transient_failure_retry",
-                            model=current_model,
-                            attempt=attempt + 1,
-                            reason="empty" if is_empty else "error"
-                        )
+                        # If empty with reasoning enabled, disable thinking on retry
+                        # (thinking tokens may consume budget without producing content)
+                        if is_empty and reasoning_effort and reasoning_effort != "none":
+                            logger.warning(
+                                "pipeline.empty_with_thinking_disabling",
+                                model=current_model,
+                                reasoning_effort=reasoning_effort,
+                            )
+                            reasoning_effort = "none"
+                        else:
+                            logger.warning(
+                                "pipeline.transient_failure_retry",
+                                model=current_model,
+                                attempt=attempt + 1,
+                                reason="empty" if is_empty else "error"
+                            )
                         continue # Retry same model
                         
                     break # Success or non-transient, exit retry loop
@@ -486,6 +564,8 @@ class RoutingPipeline:
         return {
             "response": best_result.response,
             "model_used": best_result.model_used,
+            "tokens_input": best_result.tokens_input,
+            "tokens_output": best_result.tokens_output,
             "cost": best_result.cost,
             "latency_ms": round(elapsed, 1),
             "confidence": best_result.confidence,
@@ -496,6 +576,206 @@ class RoutingPipeline:
             "routing_explanation": decision.reasoning,
             "compiler_metadata": compiled_policy.metadata,
         }
+
+    # ------------------------------------------------------------------
+    # Deterministic tool bypass
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _try_deterministic(prompt: str, features: Any) -> dict[str, Any] | None:
+        """Try to answer purely computational tasks without an LLM call.
+
+        Returns a pipeline-compatible result dict if the task is deterministic,
+        or None if it should go through normal LLM routing.
+        """
+        import re
+
+        # Pattern 1: "count the letter/character X in/within this sentence/text/..."
+        # Extract the target character from "letter 'X'" or "character 'X'"
+        target_match = re.search(
+            r"(?:letter|character)s?\s+['\"](.+?)['\"]",
+            prompt,
+            re.IGNORECASE,
+        )
+        if target_match:
+            target = target_match.group(1)
+            # Find the text to count in — look for the longest quoted string
+            quotes = re.findall(r"['\"](.+?)['\"]", prompt, re.IGNORECASE)
+            if quotes:
+                # Use the longest quoted string as the sentence
+                sentence = max(quotes, key=len)
+                count = sentence.count(target)
+                return {
+                    "response": str(count),
+                    "model_used": "deterministic:count",
+                    "tokens_input": 0,
+                    "tokens_output": 0,
+                    "cost": 0.0,
+                    "latency_ms": 0.0,
+                    "confidence": 1.0,
+                    "cache_hit": False,
+                    "escalated": False,
+                    "escalation_depth": 0,
+                    "task_vector": {},
+                    "routing_explanation": f"Deterministic character count: '{target}' appears {count} times",
+                }
+
+        # Pattern 2: Simple arithmetic that can be evaluated
+        # "What is X + Y * Z?" or "Calculate X * Y"
+        if features.task_type == "math" and features.contains_math:
+            # Try to extract a simple arithmetic expression
+            # Look for patterns like "2 + 3", "10 * 5", "100 / 4"
+            math_match = re.search(
+                r"(?:what\s+is|calculate|compute|find)\s+([\d\s\+\-\*\/\.\(\)]+)",
+                prompt,
+                re.IGNORECASE,
+            )
+            if math_match:
+                expr = math_match.group(1).strip()
+                # Validate it's safe (only numbers and operators)
+                if re.match(r"^[\d\s\+\-\*\/\.\(\)]+$", expr):
+                    try:
+                        result_val = eval(expr)  # noqa: S307 — validated safe
+                        return {
+                            "response": str(result_val),
+                            "model_used": "deterministic:math",
+                            "tokens_input": 0,
+                            "tokens_output": 0,
+                            "cost": 0.0,
+                            "latency_ms": 0.0,
+                            "confidence": 1.0,
+                            "cache_hit": False,
+                            "escalated": False,
+                            "escalation_depth": 0,
+                            "task_vector": {},
+                            "routing_explanation": f"Deterministic math: {expr} = {result_val}",
+                        }
+                    except (ZeroDivisionError, ValueError, SyntaxError):
+                        pass
+
+        return None
+
+    @staticmethod
+    def _map_domain_to_task_type(domain: str, fallback: str) -> str:
+        """Map Supra-Router domain labels to internal task types."""
+        domain_lower = domain.lower()
+        mapping = {
+            # Math domains (unambiguous only)
+            "math": "math",
+            "probability": "math",
+            "algebra": "math",
+            "calculus": "math",
+            "statistics": "math",
+            "geometry": "math",
+            "differential": "math",
+            "arithmetic": "math",
+            "equation": "math",
+            # Code domains
+            "code": "code",
+            "programming": "code",
+            "software": "code",
+            "sql": "code",
+            "python": "code",
+            "debugging": "code",
+            "web development": "code",
+            "api": "code",
+            # Reasoning domains
+            "reasoning": "reasoning",
+            "logic": "reasoning",
+            "puzzle": "reasoning",
+            "deduction": "reasoning",
+            "comparison": "reasoning",
+            "architecture": "reasoning",
+            "operating system": "reasoning",
+            "system design": "reasoning",
+            "networking": "reasoning",
+            "protocol": "reasoning",
+            # Creative domains
+            "creative": "creative",
+            "writing": "creative",
+            "poetry": "creative",
+            "haiku": "creative",
+            "sonnet": "creative",
+            "literature": "creative",
+            "content writing": "creative",
+            # Translation
+            "translation": "translation",
+            "language": "translation",
+            "english language": "translation",
+            "french": "translation",
+            "spanish": "translation",
+            "german": "translation",
+            "natural language processing": "translation",
+            # Extraction
+            "extraction": "extraction",
+            "ner": "extraction",
+            "entity": "extraction",
+            "parsing": "extraction",
+            "json": "extraction",
+            "etymology": "extraction",
+            # Retrieval
+            "retrieval": "retrieval",
+            "factual": "retrieval",
+            "qa": "retrieval",
+            "question": "retrieval",
+            "lookup": "retrieval",
+            # Classification / sentiment
+            "sentiment": "retrieval",
+            "classification": "retrieval",
+            "rating": "retrieval",
+            "review": "retrieval",
+            # General (catch-all for ambiguous domains)
+            "general": "general_qa",
+            "machine learning": "general_qa",
+            "ai": "general_qa",
+            "computer": "general_qa",
+            "computer science": "general_qa",
+            "technology": "general_qa",
+            "science": "general_qa",
+            "medical": "general_qa",
+            "healthcare": "general_qa",
+            "communication": "general_qa",
+            "e-commerce": "general_qa",
+            "physics": "general_qa",
+            "finance": "general_qa",
+            "trading": "general_qa",
+            "mixed structures": "general_qa",
+            "finance/trading": "general_qa",
+        }
+        for key, task_type in mapping.items():
+            if key in domain_lower:
+                return task_type
+        return fallback
+
+    def _build_features_from_supra(self, prompt: str, supra: Any) -> Any:
+        """Build a FeatureVector from SupraRouter output (replaces regex)."""
+        from app.features.extractor import FeatureVector  # noqa: PLC0415
+
+        fv = FeatureVector()
+        fv.input_length = len(prompt.split())
+        fv.question_count = prompt.count("?")
+        fv.task_type = self._map_domain_to_task_type(supra.domain, "general_qa")
+        fv.contains_math = supra.needs_math
+        fv.contains_code = supra.needs_code
+        fv.complexity = supra.complexity
+
+        # Derive additional flags from domain
+        domain_lower = supra.domain.lower()
+        fv.requires_reasoning = "reason" in domain_lower or "logic" in domain_lower
+        fv.requires_retrieval = "retriev" in domain_lower or "factual" in domain_lower
+        fv.is_creative = "creat" in domain_lower or "writ" in domain_lower
+        fv.is_translation = "translat" in domain_lower
+        fv.is_extraction = "extract" in domain_lower
+
+        # Output length heuristics
+        if fv.is_creative or fv.contains_code:
+            fv.expected_output_length = "long"
+        elif fv.requires_retrieval or fv.is_extraction:
+            fv.expected_output_length = "short"
+        else:
+            fv.expected_output_length = "medium"
+
+        return fv
 
     # ------------------------------------------------------------------
     # Internal routing decision
@@ -587,12 +867,17 @@ class RoutingPipeline:
         risk_dict: dict[str, Any],
         required_accuracy: float,
         force_model: str | None,
+        supra_route: str | None = None,
     ) -> RoutingDecision:
         """Select the model using a 3-level priority chain.
 
         1. force_model override (testing / debugging)
         2. Local LLM router (Qwen2.5-3B, max_tokens=15)
         3. Heuristic decision engine (fallback — always works)
+
+        If supra_route is "big model", required_accuracy is bumped to
+        push the local model out of contention. If "small model", the
+        threshold stays low to favour $0 local inference.
         """
         settings = get_settings()
 
@@ -639,9 +924,10 @@ class RoutingPipeline:
         # This pushes it out of reach of the local model for tricky edge cases
         base_accuracy += (0.20 * complexity)
 
-        # Code tasks require extreme precision (syntax, edge cases)
+        # Code tasks require precision (syntax, edge cases) but don't over-bump
+        # — kimi-k2p7-code has 0.9675 code score and should be eligible.
         if features.task_type == "code":
-            base_accuracy += 0.15
+            base_accuracy += 0.10
             
         # The local model has suspiciously high offline scores for extraction/retrieval 
         # (0.95+). We bump the requirement to ensure it only wins on simple prompts.
@@ -651,6 +937,23 @@ class RoutingPipeline:
         # If the risk vector detected strict constraints, bump requirement heavily
         if risk_dict.get("strict_formatting") or risk_dict.get("needs_high_accuracy"):
             base_accuracy += 0.15
+
+        # Supra-Router route override: bump threshold when ML says "big model"
+        # This prevents the local $0 model from winning on complex prompts.
+        # Keep the bump moderate (+0.10) so only genuinely complex tasks go to Fireworks.
+        if supra_route == "big model":
+            base_accuracy += 0.10
+            logger.info(
+                "pipeline.supra_route_big_model",
+                base_accuracy=base_accuracy,
+            )
+        elif supra_route == "small model":
+            # Keep threshold low — favour $0 local model
+            base_accuracy = max(base_accuracy - 0.10, 0.70)
+            logger.info(
+                "pipeline.supra_route_small_model",
+                base_accuracy=base_accuracy,
+            )
 
         # Cap at 0.97 to ensure we can force a fallback for extreme complexity.
         # This prevents the local model (which has inflated 0.956+ scores for 

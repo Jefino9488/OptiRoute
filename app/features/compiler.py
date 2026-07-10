@@ -107,7 +107,7 @@ class InferencePolicyCompiler:
             name="task:math",
             category="task",
             priority=80,
-            condition=lambda t, res, risk, m: risk.get("high_accuracy_required", False) and t.get("math", 0.0) > 0.5,
+            condition=lambda t, res, risk, m: risk.get("needs_high_accuracy", False) and t.get("math", 0.0) > 0.5,
             instruction="Compute carefully and step-by-step. Return concise working and the final answer clearly. Maximum 8 bullet points or short steps."
         )
         self._registry.register(
@@ -123,6 +123,13 @@ class InferencePolicyCompiler:
             priority=70,
             condition=lambda t, res, risk, m: t.get("reasoning", 0.0) > 0.6,
             instruction="Solve step by step internally. Return only the final explanation in a maximum of 4 short bullet points or sentences."
+        )
+        self._registry.register(
+            name="task:retrieval",
+            category="task",
+            priority=68,
+            condition=lambda t, res, risk, m: t.get("retrieval", 0.0) > 0.6,
+            instruction="This is a precise factual or counting question. Count or verify each element individually — do not guess or estimate. Show your counting steps if applicable."
         )
         self._registry.register(
             name="task:creative",

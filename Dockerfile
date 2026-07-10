@@ -54,6 +54,9 @@ RUN --mount=type=bind,source=models,target=/local_models \
         python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='bartowski/Qwen2.5-3B-Instruct-GGUF', filename='Qwen2.5-3B-Instruct-Q4_K_M.gguf', local_dir='/models', local_dir_use_symlinks=False)"; \
     fi
 
+# Download Supra-Router-51M GGUF (~37MB, for ML-based prompt routing)
+RUN python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='SupraLabs/Supra-Router-51M-gguf', filename='Supra-Router-51M-Q4_K_M.gguf', local_dir='/models', local_dir_use_symlinks=False)"
+
 # ── Stage 3: Final runtime image ──────────────────────────────────────────────
 FROM python:3.12-slim
 
@@ -101,9 +104,25 @@ ENV LOCAL_MODEL_THREADS=2
 ENV LOCAL_ROUTER_ENABLED=false
 ENV LOCAL_SERVER_URL=http://localhost:8080/v1
 
-# ── Entrypoint: start llama-server, wait until healthy, then run agent ─────────
+# ── Supra-Router-51M env vars ──────────────────────────────────────────────────
+ENV SUPRA_ROUTER_ENABLED=true
+ENV SUPRA_ROUTER_URL=http://localhost:8081
+
+# ── Entrypoint: start both llama-server instances, wait until healthy, then run agent ─
 RUN printf '#!/bin/sh\n\
-echo "[startup] Launching llama-server..."\n\
+echo "[startup] Launching Supra-Router llama-server (port 8081)..."\n\
+llama-server \\\n\
+  -m models/Supra-Router-51M-Q4_K_M.gguf \\\n\
+  --port 8081 --host 0.0.0.0 \\\n\
+  --threads 1 -c 3840 \\\n\
+  -b 128 --ubatch-size 128 \\\n\
+  --cont-batching -np 1 \\\n\
+  --no-mmap \\\n\
+  --reasoning off \\\n\
+  > /app/supra_router_server.log 2>&1 &\n\
+SUPRA_PID=$!\n\
+\n\
+echo "[startup] Launching main Qwen llama-server (port 8080)..."\n\
 llama-server \\\n\
   -m models/Qwen2.5-3B-Instruct-Q4_K_M.gguf \\\n\
   --port 8080 --host 0.0.0.0 \\\n\
@@ -115,17 +134,17 @@ llama-server \\\n\
   > /app/llama_server.log 2>&1 &\n\
 LLAMA_PID=$!\n\
 \n\
-echo "[startup] Waiting for llama-server to be ready (up to 60s)..."\n\
+echo "[startup] Waiting for Supra-Router to be ready (up to 30s)..."\n\
 READY=0\n\
-for i in $(seq 1 60); do\n\
-    if ! kill -0 $LLAMA_PID > /dev/null 2>&1; then\n\
-        echo "[startup] ERROR: llama-server process exited unexpectedly!"\n\
-        echo "[startup] --- llama-server logs ---"\n\
-        cat /app/llama_server.log\n\
+for i in $(seq 1 15); do\n\
+    if ! kill -0 $SUPRA_PID > /dev/null 2>&1; then\n\
+        echo "[startup] ERROR: Supra-Router process exited unexpectedly!"\n\
+        echo "[startup] --- Supra-Router logs ---"\n\
+        cat /app/supra_router_server.log\n\
         exit 1\n\
     fi\n\
-    if curl -sf http://localhost:8080/health > /dev/null 2>&1; then\n\
-        echo "[startup] llama-server ready after ${i}x2s"\n\
+    if curl -sf http://localhost:8081/health > /dev/null 2>&1; then\n\
+        echo "[startup] Supra-Router ready after ${i}x2s"\n\
         READY=1\n\
         break\n\
     fi\n\
@@ -133,8 +152,29 @@ for i in $(seq 1 60); do\n\
 done\n\
 \n\
 if [ "$READY" = "0" ]; then\n\
-    echo "[startup] ERROR: llama-server did not respond within 120s"\n\
-    echo "[startup] --- llama-server logs ---"\n\
+    echo "[startup] WARNING: Supra-Router not ready, continuing without ML routing"\n\
+fi\n\
+\n\
+echo "[startup] Waiting for main llama-server to be ready (up to 60s)..."\n\
+READY=0\n\
+for i in $(seq 1 60); do\n\
+    if ! kill -0 $LLAMA_PID > /dev/null 2>&1; then\n\
+        echo "[startup] ERROR: main llama-server process exited unexpectedly!"\n\
+        echo "[startup] --- main llama-server logs ---"\n\
+        cat /app/llama_server.log\n\
+        exit 1\n\
+    fi\n\
+    if curl -sf http://localhost:8080/health > /dev/null 2>&1; then\n\
+        echo "[startup] main llama-server ready after ${i}x2s"\n\
+        READY=1\n\
+        break\n\
+    fi\n\
+    sleep 2\n\
+done\n\
+\n\
+if [ "$READY" = "0" ]; then\n\
+    echo "[startup] ERROR: main llama-server did not respond within 120s"\n\
+    echo "[startup] --- main llama-server logs ---"\n\
     cat /app/llama_server.log\n\
     exit 1\n\
 fi\n\
@@ -143,6 +183,6 @@ echo "[startup] Starting evaluation agent..."\n\
 exec /app/.venv/bin/python agent.py\n\
 ' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
-EXPOSE 8000 8080
+EXPOSE 8000 8080 8081
 
 ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"]

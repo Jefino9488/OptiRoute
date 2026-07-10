@@ -76,7 +76,10 @@ _MATH_KEYWORDS_RE = re.compile(
     r"multiply|divide|subtract|add|compute|arithmetic|"
     r"algebra|geometry|trigonometry|calculus|statistics|"
     r"matrix|vector|determinant|eigenvalue|"
-    r"percentage|fraction|ratio|proportion"
+    r"percentage|fraction|ratio|proportion|"
+    r"sells?\s+\d|restock\s+\d|inventory\s+of|depreciat(?:ion|es)?|appreciat(?:ion|es)?|"
+    r"starts?\s+with\s+\d|"
+    r"how\s+many\s+(?:units?|items?|dollars?|products?|goods?|are\s+left|remain)"
     r")\b",
     re.IGNORECASE,
 )

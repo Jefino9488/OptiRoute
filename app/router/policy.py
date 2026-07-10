@@ -34,7 +34,7 @@ class EscalationPolicy:
     def __init__(
         self,
         max_depth: int = 2,
-        confidence_threshold: float = 0.7,
+        confidence_threshold: float = 0.9,
     ) -> None:
         self.max_depth: int = max_depth
         self.confidence_threshold: float = confidence_threshold

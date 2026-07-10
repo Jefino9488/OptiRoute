@@ -60,7 +60,7 @@ class Settings(BaseSettings):
         description="Maximum number of escalation retries",
     )
     confidence_threshold: float = Field(
-        default=0.7,
+        default=0.9,
         ge=0.0,
         le=1.0,
         description="Minimum confidence score before escalation is triggered",
@@ -108,6 +108,16 @@ class Settings(BaseSettings):
     local_server_url: str = Field(
         default="http://localhost:8080/v1",
         description="Base URL of the llama-server HTTP API (OpenAI-compatible)",
+    )
+
+    # --- Supra-Router-51M (ML-based routing) ---
+    supra_router_enabled: bool = Field(
+        default=True,
+        description="Enable Supra-Router-51M for ML-based prompt classification",
+    )
+    supra_router_url: str = Field(
+        default="http://localhost:8081",
+        description="Base URL of the Supra-Router llama-server instance",
     )
 
     model_config = {

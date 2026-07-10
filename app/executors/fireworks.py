@@ -25,7 +25,7 @@ _TEMP_MAP: dict[str, float] = {
     "extraction": 0.0,
     "translation": 0.3,
     "reasoning": 0.3,
-    "retrieval": 0.2,
+    "retrieval": 0.0,
     "creative": 0.7,
     "general_qa": 0.4,
 }

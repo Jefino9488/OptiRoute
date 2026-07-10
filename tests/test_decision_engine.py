@@ -49,7 +49,7 @@ def engine(capability_matrix: CapabilityMatrix) -> DecisionEngine:
 @pytest.fixture()
 def policy() -> EscalationPolicy:
     """Create the default escalation policy."""
-    return EscalationPolicy(max_depth=2, confidence_threshold=0.7)
+    return EscalationPolicy(max_depth=2, confidence_threshold=0.9)
 
 
 # ---------------------------------------------------------------------------
