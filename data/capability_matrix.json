@@ -18,6 +18,8 @@
       "translation",
       "retrieval"
     ],
+    "supports_thinking": true,
+    "thinking_cost_multiplier": 1.8,
     "avg_latency_ms": 4490.1
   },
   "kimi-k2p7-code": {
@@ -39,6 +41,8 @@
       "translation",
       "extraction"
     ],
+    "supports_thinking": true,
+    "thinking_cost_multiplier": 1.3,
     "avg_latency_ms": 4908.5
   },
   "local:qwen-2.5-3b": {
@@ -59,6 +63,8 @@
     "fails_on": [
       "translation"
     ],
+    "supports_thinking": false,
+    "thinking_cost_multiplier": 1.0,
     "avg_latency_ms": 4728.2
   }
 }

@@ -48,6 +48,7 @@ async def route_prompt(request: RouteRequest) -> RouteResponse:
             prompt=request.prompt,
             required_accuracy=request.required_accuracy,
             force_model=request.force_model,
+            enable_thinking=request.enable_thinking,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -74,6 +75,7 @@ async def list_models() -> list[ModelInfo]:
                 cost_per_1k_output=entry.get("cost_per_1k_output", 0.0),
                 max_context=entry.get("max_context", 0),
                 fails_on=entry.get("fails_on", []),
+                supports_thinking=entry.get("supports_thinking", False),
             )
         )
     return models

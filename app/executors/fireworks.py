@@ -54,6 +54,7 @@ class FireworksExecutor:
         system_prompt: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> ExecutionResult:
         """Send a prompt to Fireworks and return the result.
 
@@ -71,6 +72,10 @@ class FireworksExecutor:
             Override for max output tokens.
         temperature : float | None
             Override for sampling temperature.
+        reasoning_effort : str | None
+            Fireworks reasoning_effort parameter.  Supported values:
+            ``"none"`` (thinking off), ``"low"``, ``"medium"``, ``"high"``,
+            ``"max"``.  ``None`` omits the parameter (model default).
 
         Returns
         -------
@@ -93,6 +98,7 @@ class FireworksExecutor:
             task_type=task_type,
             temperature=temp,
             max_tokens=max_tok,
+            reasoning_effort=reasoning_effort,
         )
 
         start = time.perf_counter()
@@ -102,12 +108,15 @@ class FireworksExecutor:
         
         for attempt in range(max_retries):
             try:
-                response = await self._client.chat.completions.create(
-                    model=full_model,
-                    messages=messages,
-                    temperature=temp,
-                    max_tokens=max_tok,
-                )
+                kwargs: dict[str, Any] = {
+                    "model": full_model,
+                    "messages": messages,
+                    "temperature": temp,
+                    "max_tokens": max_tok,
+                }
+                if reasoning_effort is not None:
+                    kwargs["reasoning_effort"] = reasoning_effort
+                response = await self._client.chat.completions.create(**kwargs)
                 break  # Success
             except RateLimitError as exc:
                 if attempt == max_retries - 1:

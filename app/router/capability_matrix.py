@@ -100,6 +100,20 @@ class CapabilityMatrix:
         """Return a list of all model IDs in the matrix."""
         return list(self._data.keys())
 
+    def supports_thinking(self, model_id: str) -> bool:
+        """Check if a model supports Fireworks reasoning_effort parameter."""
+        entry = self._data.get(model_id)
+        if entry is None:
+            return False
+        return entry.get("supports_thinking", False)
+
+    def get_thinking_cost_multiplier(self, model_id: str) -> float:
+        """Return the cost multiplier when thinking is enabled for a model."""
+        entry = self._data.get(model_id)
+        if entry is None:
+            return 1.0
+        return entry.get("thinking_cost_multiplier", 1.0)
+
 
     def get_capable_models(
         self,
@@ -141,6 +155,8 @@ class CapabilityMatrix:
                         "cost_per_1k_input": entry["cost_per_1k_input"],
                         "cost_per_1k_output": entry["cost_per_1k_output"],
                         "avg_output_multiplier": entry.get("avg_output_multiplier", 1.0),
+                        "supports_thinking": entry.get("supports_thinking", False),
+                        "thinking_cost_multiplier": entry.get("thinking_cost_multiplier", 1.0),
                     }
                 )
         return results
@@ -189,14 +205,17 @@ class CapabilityMatrix:
         model_id: str,
         input_tokens: int,
         output_tokens: int,
+        thinking_enabled: bool = False,
     ) -> float | None:
         """Estimate inference cost in USD for the given token counts.
 
         The formula accounts for Kimi's mandatory thinking overhead via
-        ``avg_output_multiplier``::
+        ``avg_output_multiplier`` and optional thinking cost via
+        ``thinking_cost_multiplier``::
 
             cost = input_tokens * cost_per_1k_input / 1000
                  + output_tokens * avg_output_multiplier * cost_per_1k_output / 1000
+                 * (thinking_cost_multiplier if thinking_enabled else 1.0)
 
         Parameters
         ----------
@@ -206,6 +225,8 @@ class CapabilityMatrix:
             Estimated number of input tokens.
         output_tokens : int
             Estimated number of output tokens (before multiplier).
+        thinking_enabled : bool
+            Whether thinking/reasoning is enabled for this request.
 
         Returns
         -------
@@ -221,9 +242,10 @@ class CapabilityMatrix:
             return None
 
         multiplier = entry.get("avg_output_multiplier", 1.0)
+        thinking_mult = entry.get("thinking_cost_multiplier", 1.0) if thinking_enabled else 1.0
         cost = (
             input_tokens * entry["cost_per_1k_input"] / 1000
-            + output_tokens * multiplier * entry["cost_per_1k_output"] / 1000
+            + output_tokens * multiplier * thinking_mult * entry["cost_per_1k_output"] / 1000
         )
         return cost
 

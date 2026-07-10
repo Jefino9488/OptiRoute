@@ -111,9 +111,25 @@ class DecisionEngine:
             candidates=candidates,
         )
 
+        # Step 1: Filter out models that are known to fail on the dominant task
+        filtered_candidates: list[str] = []
+        for model_id in candidates:
+            entry = self._matrix.get_model_capabilities(model_id)
+            if entry is None:
+                continue
+            fails_on: list[str] = entry.get("fails_on", [])
+            if dominant_task in fails_on:
+                logger.info(
+                    "decision_engine.skipped_fails_on",
+                    model=model_id,
+                    dominant_task=dominant_task,
+                )
+                continue
+            filtered_candidates.append(model_id)
+
         # Step 2 + 3: Compute weighted accuracy and filter by threshold
         eligible: list[dict[str, Any]] = []
-        for model_id in candidates:
+        for model_id in filtered_candidates:
             entry = self._matrix.get_model_capabilities(model_id)
             if entry is None:
                 continue

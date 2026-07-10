@@ -158,15 +158,27 @@ class BenchmarkRunner:
                     task_type=bp.category,
                 )
             else:
+                # Enable thinking for models that support it on reasoning-heavy tasks
+                reasoning_effort = None
+                if self._matrix.supports_thinking(model_id):
+                    # Categories that benefit from thinking
+                    _THINKING_CATEGORIES = {"reasoning", "math", "code"}
+                    if bp.category in _THINKING_CATEGORIES:
+                        reasoning_effort = "high"
+                    else:
+                        reasoning_effort = "none"
+
                 exec_result = await self._fireworks_executor.execute(
                     prompt=bp.prompt,
                     model_id=model_id,
                     task_type=bp.category,
+                    reasoning_effort=reasoning_effort,
                 )
                 exec_result.cost = self._matrix.estimate_cost(
                     model_id, 
                     exec_result.tokens_input, 
-                    exec_result.tokens_output
+                    exec_result.tokens_output,
+                    thinking_enabled=(reasoning_effort is not None and reasoning_effort != "none"),
                 ) or 0.0
             results.append(BenchmarkResult(
                 prompt=bp.prompt,

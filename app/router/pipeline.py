@@ -104,6 +104,7 @@ class RoutingPipeline:
         prompt: str,
         required_accuracy: float = 0.75,
         force_model: str | None = None,
+        enable_thinking: bool | None = None,
     ) -> dict[str, Any]:
         """Route a prompt through the full pipeline.
 
@@ -115,6 +116,8 @@ class RoutingPipeline:
             Minimum accuracy threshold (0.75 allows local model).
         force_model : str | None
             Bypass the decision engine and force a specific model.
+        enable_thinking : bool | None
+            None = auto-detect, True = force thinking ON, False = force OFF.
 
         Returns
         -------
@@ -174,6 +177,23 @@ class RoutingPipeline:
             "complexity": resource_vec.complexity,
         }
         risk_dict = risk_vec.to_dict()
+
+        # Step 3b: Determine reasoning_effort for thinking models
+        reasoning_effort = self._compute_reasoning_effort(
+            features=features,
+            task_dict=task_dict,
+            resource_dict=resource_dict,
+            enable_thinking=enable_thinking,
+            prompt=prompt,
+        )
+        logger.info(
+            "pipeline.reasoning_effort_resolved",
+            reasoning_effort=reasoning_effort,
+            task_type=features.task_type,
+            complexity=resource_dict.get("complexity", 0.0),
+            requires_reasoning=features.requires_reasoning,
+            contains_math=features.contains_math,
+        )
 
         # Step 4: Decide model
         decision = await self._make_routing_decision(
@@ -291,12 +311,14 @@ class RoutingPipeline:
                         task_type=features.task_type,
                         system_prompt=fireworks_system_prompt,
                         max_tokens=current_max_tokens,
+                        reasoning_effort=reasoning_effort,
                     )
                     
                     result.cost = self._matrix.estimate_cost(
                         current_model,
                         result.tokens_input,
                         result.tokens_output,
+                        thinking_enabled=(reasoning_effort is not None and reasoning_effort != "none"),
                     ) or 0.0
 
                     finish_reason = result.raw_metadata.get("finish_reason")
@@ -412,6 +434,125 @@ class RoutingPipeline:
     # ------------------------------------------------------------------
     # Internal routing decision
     # ------------------------------------------------------------------
+
+    def _compute_reasoning_effort(
+        self,
+        features: Any,
+        task_dict: dict[str, float],
+        resource_dict: dict[str, Any],
+        enable_thinking: bool | None,
+        prompt: str = "",
+    ) -> str | None:
+        """Determine the Fireworks reasoning_effort parameter.
+
+        Logic:
+        1. If enable_thinking is explicitly True → "high"
+        2. If enable_thinking is explicitly False → "none"
+        3. If enable_thinking is None (auto-detect):
+           - High reasoning dimension OR complex task → "high"
+           - Moderate reasoning → "low"
+           - Simple tasks → "none"
+
+        Parameters
+        ----------
+        features : FeatureVector
+            Extracted features from the prompt.
+        task_dict : dict
+            Task vector with dimension weights.
+        resource_dict : dict
+            Resource estimates including complexity.
+        enable_thinking : bool | None
+            User override (None = auto-detect).
+
+        Returns
+        -------
+        str | None
+            reasoning_effort value, or None to omit the parameter.
+        """
+        if enable_thinking is True:
+            logger.info(
+                "pipeline.thinking_forced_on",
+                prompt_preview=prompt[:80],
+            )
+            return "high"
+        if enable_thinking is False:
+            logger.info(
+                "pipeline.thinking_forced_off",
+                prompt_preview=prompt[:80],
+            )
+            return "none"
+
+        # Auto-detect: check if task benefits from reasoning
+        reasoning_weight = task_dict.get("reasoning", 0.0)
+        math_weight = task_dict.get("math", 0.0)
+        code_weight = task_dict.get("code", 0.0)
+        complexity = resource_dict.get("complexity", 0.0)
+
+        # High-value signals: deep reasoning, math proofs, complex code
+        needs_deep_thinking = (
+            reasoning_weight > 0.5
+            or (math_weight > 0.5 and reasoning_weight > 0.2)
+            or (code_weight > 0.5 and complexity > 0.5)
+            or (features.requires_reasoning and complexity > 0.6)
+        )
+
+        # Moderate signals: some reasoning, explanation requests
+        needs_light_thinking = (
+            reasoning_weight > 0.2
+            or features.requires_reasoning
+            or features.contains_math
+        )
+
+        if needs_deep_thinking:
+            # Log which condition triggered deep thinking
+            trigger = (
+                f"reasoning={reasoning_weight:.2f}>0.5"
+                if reasoning_weight > 0.5
+                else f"math={math_weight:.2f}>0.5 & reasoning={reasoning_weight:.2f}>0.2"
+                if math_weight > 0.5 and reasoning_weight > 0.2
+                else f"code={code_weight:.2f}>0.5 & complexity={complexity:.2f}>0.5"
+                if code_weight > 0.5 and complexity > 0.5
+                else f"requires_reasoning={features.requires_reasoning} & complexity={complexity:.2f}>0.6"
+            )
+            logger.info(
+                "pipeline.auto_thinking_high",
+                trigger=trigger,
+                reasoning=reasoning_weight,
+                math=math_weight,
+                code=code_weight,
+                complexity=complexity,
+                prompt_preview=prompt[:80],
+            )
+            return "high"
+        if needs_light_thinking:
+            # Log which condition triggered light thinking
+            trigger = (
+                f"reasoning={reasoning_weight:.2f}>0.2"
+                if reasoning_weight > 0.2
+                else f"requires_reasoning={features.requires_reasoning}"
+                if features.requires_reasoning
+                else f"contains_math={features.contains_math}"
+            )
+            logger.info(
+                "pipeline.auto_thinking_low",
+                trigger=trigger,
+                reasoning=reasoning_weight,
+                math=math_weight,
+                complexity=complexity,
+                prompt_preview=prompt[:80],
+            )
+            return "low"
+
+        logger.info(
+            "pipeline.auto_thinking_none",
+            reasoning=reasoning_weight,
+            math=math_weight,
+            code=code_weight,
+            complexity=complexity,
+            requires_reasoning=features.requires_reasoning,
+            prompt_preview=prompt[:80],
+        )
+        return "none"
 
     async def _make_routing_decision(
         self,

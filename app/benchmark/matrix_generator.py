@@ -22,6 +22,31 @@ logger = structlog.get_logger(__name__)
 # the category is added to its fails_on list.
 _FAILURE_THRESHOLD: float = 0.5
 
+# Model thinking properties — hardcoded because these are inherent to the
+# Fireworks API model configuration, not derived from benchmarks.
+# Supports reasoning_effort parameter: "none", "low", "medium", "high", "max"
+# thinking_cost_multiplier: additional cost factor when thinking is enabled.
+MODEL_THINKING_PROPERTIES: dict[str, dict[str, Any]] = {
+    "minimax-m3": {
+        "supports_thinking": True,
+        "thinking_cost_multiplier": 1.8,
+    },
+    "kimi-k2p7-code": {
+        "supports_thinking": True,
+        "thinking_cost_multiplier": 1.3,
+    },
+    "local:qwen-2.5-3b": {
+        "supports_thinking": False,
+        "thinking_cost_multiplier": 1.0,
+    },
+}
+
+# Default thinking properties for unknown models
+_DEFAULT_THINKING: dict[str, Any] = {
+    "supports_thinking": False,
+    "thinking_cost_multiplier": 1.0,
+}
+
 
 class CapabilityMatrixGenerator:
     """Generate a capability matrix from benchmark evaluation results.
@@ -100,6 +125,18 @@ class CapabilityMatrixGenerator:
                     capabilities[dim] = 0.5  # Default
 
             samples: dict[str, int] = sample_counts.get(model_id, {})
+            thinking = MODEL_THINKING_PROPERTIES.get(model_id, _DEFAULT_THINKING)
+
+            # Auto-update fails_on: any category below the failure threshold
+            new_fails = sorted(
+                dim for dim, score in capabilities.items()
+                if score < _FAILURE_THRESHOLD
+            )
+            # Preserve existing fails_on entries for untested dimensions
+            existing_fails = existing.get("fails_on", [])
+            tested_dims = set(category_scores.keys())
+            preserved = [d for d in existing_fails if d not in tested_dims]
+            combined_fails = sorted(set(new_fails + preserved))
 
             updated[model_id] = {
                 "capabilities": capabilities,
@@ -107,11 +144,15 @@ class CapabilityMatrixGenerator:
                 "cost_per_1k_output": existing.get("cost_per_1k_output", 0.0004),
                 "avg_output_multiplier": existing.get("avg_output_multiplier", 1.0),
                 "max_context": existing.get("max_context", 256000),
+                "fails_on": combined_fails,
+                "supports_thinking": thinking["supports_thinking"],
+                "thinking_cost_multiplier": thinking["thinking_cost_multiplier"],
                 "samples": samples,
                 "avg_latency_ms": self._compute_avg_latency(
                     all_results.get(model_id, [])
                 ),
             }
+
 
         logger.info(
             "matrix_generator.complete",
