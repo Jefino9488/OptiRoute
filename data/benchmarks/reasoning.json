@@ -13,5 +13,8 @@
   {"prompt": "Why is it harder to compress data that has already been compressed?", "expected_output": "redundancy removed entropy high fewer patterns to exploit", "category": "reasoning", "difficulty": "hard"},
   {"prompt": "Explain why sorting algorithms have a theoretical lower bound of O(n log n) for comparison-based sorting.", "expected_output": "decision tree model n! possible permutations log(n!) = O(n log n)", "category": "reasoning", "difficulty": "hard"},
   {"prompt": "What are the ethical implications of using AI for facial recognition in public spaces?", "expected_output": "privacy surveillance bias accuracy consent civil liberties", "category": "reasoning", "difficulty": "hard"},
-  {"prompt": "If you could only use one data structure for the rest of your career, which would you choose and why?", "expected_output": "hash map dictionary versatile O(1) lookup flexible", "category": "reasoning", "difficulty": "medium"}
+  {"prompt": "If you could only use one data structure for the rest of your career, which would you choose and why?", "expected_output": "hash map dictionary versatile O(1) lookup flexible", "category": "reasoning", "difficulty": "medium"},
+  {"prompt": "Which is generally heavier: a pound of feathers or a pound of bricks?", "expected_output": "They weigh the same, exactly one pound", "category": "reasoning", "difficulty": "easy"},
+  {"prompt": "If today is Tuesday, what day will it be in 3 days?", "expected_output": "Friday", "category": "reasoning", "difficulty": "easy"},
+  {"prompt": "Is the number 8 an even or odd number? Briefly explain.", "expected_output": "even divisible by two", "category": "reasoning", "difficulty": "easy"}
 ]

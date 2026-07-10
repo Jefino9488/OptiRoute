@@ -10,24 +10,15 @@ dependencies = [
     "uvicorn>=0.50.2",
     "pydantic-settings>=2.9.0",
     "httpx>=0.28.0",
+    "requests>=2.32.0",
     "openai>=1.82.0",
     "numpy>=2.2.0",
     "structlog>=25.1.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=1.0.0",
     "pydantic>=2.13.4",
-    "llama-cpp-python>=0.3.9",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "strict"
-
-[[tool.uv.index]]
-name = "llama-cpp-cpu"
-url = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-llama-cpp-python = [{ index = "llama-cpp-cpu" }]
-

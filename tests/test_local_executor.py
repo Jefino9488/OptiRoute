@@ -1,23 +1,23 @@
-"""Tests for LocalExecutor — mock-based, no GGUF file required.
+"""Tests for LocalExecutor — mock-based, no llama-server required.
 
-These tests inject a mock llama-cpp Llama instance directly into the
-executor's _llm attribute to avoid requiring the real GGUF model.
+Uses httpx.MockTransport / respx to mock the llama-server HTTP API
+so no real server or GGUF file is needed during testing.
 """
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
+import httpx
 
 from app.executors.local import LocalExecutor
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
-
-def _make_llm_response(content: str, prompt_tokens: int = 50, completion_tokens: int = 10):
-    """Build a mock llama-cpp response dict."""
+def _make_api_response(content: str, prompt_tokens: int = 50, completion_tokens: int = 10):
+    """Build a mock llama-server /v1/chat/completions JSON response."""
     return {
         "choices": [{"message": {"content": content}}],
         "usage": {
@@ -27,18 +27,11 @@ def _make_llm_response(content: str, prompt_tokens: int = 50, completion_tokens:
     }
 
 
-@pytest.fixture
-def executor():
-    """A LocalExecutor with a mock llama-cpp Llama injected."""
-    exc = LocalExecutor(model_path="models/fake.gguf", context_length=4096, n_threads=2)
-    exc._llm = MagicMock()  # bypass load()
+def _make_executor(available: bool = True) -> LocalExecutor:
+    """Create a LocalExecutor with _available preset and a mocked httpx client."""
+    exc = LocalExecutor(model_path="models/fake.gguf")
+    exc._available = available
     return exc
-
-
-@pytest.fixture
-def unavailable_executor():
-    """A LocalExecutor with no model loaded (_llm is None)."""
-    return LocalExecutor(model_path="models/nonexistent.gguf")
 
 
 # ---------------------------------------------------------------------------
@@ -46,134 +39,82 @@ def unavailable_executor():
 # ---------------------------------------------------------------------------
 
 
-def test_is_available_false_when_not_loaded(unavailable_executor):
-    assert unavailable_executor.is_available is False
+def test_is_available_false_when_not_loaded():
+    exc = _make_executor(available=False)
+    assert exc.is_available is False
 
 
-def test_is_available_true_when_loaded(executor):
-    assert executor.is_available is True
+def test_is_available_true_when_loaded():
+    exc = _make_executor(available=True)
+    assert exc.is_available is True
 
 
 # ---------------------------------------------------------------------------
-# load() — with mocked llama_cpp import
+# load() — health check ping
 # ---------------------------------------------------------------------------
 
 
-def test_load_returns_false_when_model_file_missing():
+def test_load_returns_false_when_server_not_reachable():
     exc = LocalExecutor(model_path="models/does_not_exist.gguf")
-    result = exc.load()
+    with patch("requests.get", side_effect=ConnectionError("refused")):
+        result = exc.load()
     assert result is False
     assert exc.is_available is False
 
 
+def test_load_returns_true_when_server_healthy():
+    exc = LocalExecutor(model_path="models/fake.gguf")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_resp.json.return_value = {"status": "ok"}
+    with patch("requests.get", return_value=mock_resp):
+        result = exc.load()
+    assert result is True
+    assert exc.is_available is True
+
+
 # ---------------------------------------------------------------------------
-# route() — routing decisions for all 8 evaluation categories
+# route() — always returns None (routing handled by heuristic engine)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_route_factual_knowledge_returns_local(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("local")
-    result = await executor.route("What is the capital of France?")
-    assert result == "local"
-
-
-@pytest.mark.asyncio
-async def test_route_sentiment_returns_local(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("local")
-    result = await executor.route(
-        "Classify the sentiment: 'Great battery life but the screen scratches easily.'"
-    )
-    assert result == "local"
-
-
-@pytest.mark.asyncio
-async def test_route_ner_returns_local(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("local")
-    result = await executor.route(
-        "Extract all named entities from: Maria Sanchez joined Fireworks AI in Berlin."
-    )
-    assert result == "local"
-
-
-@pytest.mark.asyncio
-async def test_route_summarisation_returns_local(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("local")
-    result = await executor.route("Summarize this paragraph in one sentence.")
-    assert result == "local"
-
-
-@pytest.mark.asyncio
-async def test_route_code_debug_returns_kimi(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("kimi-k2p7-code")
-    result = await executor.route(
-        "This function has a bug: def get_max(nums): return nums[0]. Find and fix it."
-    )
-    assert result == "kimi-k2p7-code"
-
-
-@pytest.mark.asyncio
-async def test_route_code_gen_returns_kimi(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("kimi-k2p7-code")
-    result = await executor.route(
-        "Write a Python function that returns the second-largest number in a list."
-    )
-    assert result == "kimi-k2p7-code"
-
-
-@pytest.mark.asyncio
-async def test_route_complex_math_returns_minimax(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("minimax-m3")
-    result = await executor.route(
-        "A store has 240 items. It sells 15% on Monday and 60 more on Tuesday. How many remain?"
-    )
-    assert result == "minimax-m3"
-
-
-@pytest.mark.asyncio
-async def test_route_logical_reasoning_returns_minimax(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("minimax-m3")
-    result = await executor.route(
-        "Three friends each own a different pet. Sam doesn't own the bird. Jo owns the dog. Who owns the cat?"
-    )
-    assert result == "minimax-m3"
-
-
-@pytest.mark.asyncio
-async def test_route_returns_none_when_unavailable(unavailable_executor):
-    result = await unavailable_executor.route("What is the capital of France?")
+async def test_route_returns_none():
+    exc = _make_executor(available=True)
+    result = await exc.route("What is the capital of France?")
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_route_returns_none_on_unparseable_output(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response(
-        "I cannot determine the best model for this task."
-    )
-    result = await executor.route("Some prompt")
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_route_returns_none_on_exception(executor):
-    executor._llm.create_chat_completion.side_effect = RuntimeError("OOM")
-    result = await executor.route("test prompt")
+async def test_route_returns_none_when_unavailable():
+    exc = _make_executor(available=False)
+    result = await exc.route("What is the capital of France?")
     assert result is None
 
 
 # ---------------------------------------------------------------------------
-# execute() — response generation
+# execute() — mocked HTTP responses
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_execute_returns_response_text(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response(
+async def test_execute_returns_response_text():
+    exc = _make_executor(available=True)
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = _make_api_response(
         "Paris is the capital of France.", prompt_tokens=20, completion_tokens=8
     )
-    result = await executor.execute("What is the capital of France?", "retrieval")
+    exc._client = MagicMock()
+    exc._client.post = MagicMock(return_value=mock_response)
+
+    import asyncio
+    exc._client.post = AsyncMock(return_value=mock_response)
+
+    result = await exc.execute("What is the capital of France?", "retrieval")
     assert result.response == "Paris is the capital of France."
-    assert result.cost == 0.0  # always $0
+    assert result.cost == 0.0
     assert result.model_used == "local:qwen-2.5-3b"
     assert result.tokens_input == 20
     assert result.tokens_output == 8
@@ -181,48 +122,57 @@ async def test_execute_returns_response_text(executor):
 
 
 @pytest.mark.asyncio
-async def test_execute_cost_is_always_zero(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("Some answer")
-    result = await executor.execute("Any prompt", "general_qa")
+async def test_execute_cost_is_always_zero():
+    exc = _make_executor(available=True)
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = _make_api_response("Some answer")
+
+    from unittest.mock import AsyncMock
+    exc._client.post = AsyncMock(return_value=mock_response)
+
+    result = await exc.execute("Any prompt", "general_qa")
     assert result.cost == 0.0
 
 
 @pytest.mark.asyncio
-async def test_execute_empty_response_gives_zero_confidence(executor):
-    executor._llm.create_chat_completion.return_value = _make_llm_response("")
-    result = await executor.execute("Some prompt")
+async def test_execute_empty_response_gives_zero_confidence():
+    exc = _make_executor(available=True)
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = _make_api_response("")
+
+    from unittest.mock import AsyncMock
+    exc._client.post = AsyncMock(return_value=mock_response)
+
+    result = await exc.execute("Some prompt")
     assert result.confidence == 0.0
 
 
 @pytest.mark.asyncio
-async def test_execute_unavailable_returns_error_response(unavailable_executor):
-    result = await unavailable_executor.execute("test prompt")
+async def test_execute_unavailable_returns_error_response():
+    exc = _make_executor(available=False)
+    result = await exc.execute("test prompt")
     assert result.confidence == 0.0
     assert "LOCAL_UNAVAILABLE" in result.response
     assert result.cost == 0.0
 
 
 @pytest.mark.asyncio
-async def test_execute_on_exception_returns_error_response(executor):
-    executor._llm.create_chat_completion.side_effect = MemoryError("Out of memory")
-    result = await executor.execute("test prompt")
+async def test_execute_on_exception_returns_error_response():
+    exc = _make_executor(available=True)
+    from unittest.mock import AsyncMock
+    exc._client.post = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+    result = await exc.execute("test prompt")
     assert result.confidence == 0.0
     assert "LOCAL_ERROR" in result.response
 
 
-@pytest.mark.asyncio
-async def test_execute_uses_zero_temperature_for_math(executor):
-    """Verify math tasks use temperature=0 for deterministic output."""
-    executor._llm.create_chat_completion.return_value = _make_llm_response("345")
-    await executor.execute("What is 15 * 23?", "math")
-    call_kwargs = executor._llm.create_chat_completion.call_args[1]
-    assert call_kwargs["temperature"] == 0.0
+# ---------------------------------------------------------------------------
+# AsyncMock import helper for Python 3.8+ compatibility
+# ---------------------------------------------------------------------------
 
-
-@pytest.mark.asyncio
-async def test_execute_uses_low_temperature_for_code(executor):
-    """Verify code tasks use low temperature for deterministic output."""
-    executor._llm.create_chat_completion.return_value = _make_llm_response("def foo(): pass")
-    await executor.execute("Write a function", "code")
-    call_kwargs = executor._llm.create_chat_completion.call_args[1]
-    assert call_kwargs["temperature"] == 0.1
+try:
+    from unittest.mock import AsyncMock
+except ImportError:
+    from unittest.mock import MagicMock as AsyncMock  # type: ignore

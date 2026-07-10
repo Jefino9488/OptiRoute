@@ -35,6 +35,8 @@ class RequestMetric:
     escalation_depth: int = 0
     success: bool = True
     timestamp: float = 0.0
+    fireworks_tokens: int = 0
+    routing_path: str = ""
 
     def __post_init__(self) -> None:
         if self.timestamp == 0.0:
@@ -136,6 +138,18 @@ class MetricsCollector:
 
     def summary(self) -> dict[str, Any]:
         """Return a full metrics summary dict."""
+        local_count = sum(
+            1 for m in self._metrics
+            if m.model_used.startswith("local:") or m.model_used == "local"
+        )
+        fireworks_count = sum(
+            1 for m in self._metrics
+            if not (m.model_used.startswith("local:") or m.model_used == "local")
+            and not m.cache_hit
+        )
+        cache_count = sum(1 for m in self._metrics if m.cache_hit)
+        total_fw_tokens = sum(m.fireworks_tokens for m in self._metrics)
+
         return {
             "total_requests": self.total_requests,
             "total_cost": round(self.total_cost, 8),
@@ -144,4 +158,8 @@ class MetricsCollector:
             "avg_latency_ms": round(self.avg_latency_ms, 1),
             "model_utilization": self.model_utilization(),
             "cost_saved_vs_frontier": round(self.cost_saved_vs_frontier(), 8),
+            "local_count": local_count,
+            "fireworks_count": fireworks_count,
+            "cache_count": cache_count,
+            "total_fireworks_tokens": total_fw_tokens,
         }

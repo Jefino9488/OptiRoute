@@ -146,6 +146,13 @@ class ConfidenceValidator:
             issues.append("Excessive repetition detected (possible degenerate output)")
             penalties.append(0.5)
 
+        # 9. Task-type-specific validation
+        task_issues, task_penalties = self._validate_task_specific(
+            response, task_type, word_count
+        )
+        issues.extend(task_issues)
+        penalties.extend(task_penalties)
+
         # Compute composite confidence
         confidence = 1.0
         for penalty in penalties:
@@ -189,18 +196,23 @@ class ConfidenceValidator:
         if fences % 2 != 0:
             issues.append("Unbalanced markdown code fences")
 
-        # 2. Check for unbalanced brackets (only simple heuristics, as they might appear in code/strings)
-        # We'll just check if there's a gross mismatch to avoid false positives.
+        # 2. Check for unbalanced brackets — only for structured output
+        #    (JSON, code) to avoid false positives on prose mentioning code.
         braces = text.count('{') - text.count('}')
         brackets = text.count('[') - text.count(']')
         parens = text.count('(') - text.count(')')
-        
-        if braces > 0:
-            issues.append(f"Unbalanced braces: {braces} unclosed '{{'")
-        if brackets > 0:
-            issues.append(f"Unbalanced brackets: {brackets} unclosed '['")
-        if parens > 0:
-            issues.append(f"Unbalanced parentheses: {parens} unclosed '('")
+
+        # Only flag if the text likely contains structured data
+        has_code_fence = bool(re.search(r'^```', text, re.MULTILINE))
+        has_json_start = text.lstrip().startswith('{') or text.lstrip().startswith('[')
+
+        if has_code_fence or has_json_start:
+            if braces > 0:
+                issues.append(f"Unbalanced braces: {braces} unclosed '{{'")
+            if brackets > 0:
+                issues.append(f"Unbalanced brackets: {brackets} unclosed '['")
+            if parens > 0:
+                issues.append(f"Unbalanced parentheses: {parens} unclosed '('")
 
         # 3. Check for obvious continuation patterns at the very end
         trimmed = text.rstrip()
@@ -219,3 +231,96 @@ class ConfidenceValidator:
                     break
                     
         return issues
+
+    @staticmethod
+    def _validate_task_specific(
+        response: str,
+        task_type: str,
+        word_count: int,
+    ) -> tuple[list[str], list[float]]:
+        """Run task-type-specific quality checks.
+
+        Returns
+        -------
+        tuple[list[str], list[float]]
+            Lists of issues and corresponding penalties.
+        """
+        issues: list[str] = []
+        penalties: list[float] = []
+        lower_resp = response.lower()
+        stripped = response.strip()
+
+        if task_type == "math":
+            # Math answers should contain at least one number.
+            # NOTE: Do NOT penalize brief answers — thinking-mode models
+            # (minimax/kimi with reasoning_effort=low) do their step-by-step
+            # work inside hidden thinking tokens and emit a concise final answer.
+            # A word_count check would incorrectly flag correct brief answers.
+            has_number = bool(re.search(r'\d+', response))
+            if not has_number:
+                issues.append("Math response contains no numeric answer")
+                penalties.append(0.5)
+
+        elif task_type == "sentiment":
+            # Response MUST start with a valid sentiment label.
+            # Using a label-first format is enforced by the compiler; validate it here.
+            valid_labels = ("positive", "negative", "neutral", "mixed")
+            first_line = stripped.split("\n")[0].strip().lower().rstrip(".").rstrip(":")
+            starts_with_label = any(first_line == label or first_line.startswith(label) for label in valid_labels)
+            has_label_anywhere = any(label in lower_resp for label in valid_labels)
+            if not starts_with_label:
+                if has_label_anywhere:
+                    # Label present but not at start — mild penalty
+                    issues.append("Sentiment label not at start of response")
+                    penalties.append(0.3)
+                else:
+                    # No label at all — strong penalty, will trigger escalation
+                    issues.append("Sentiment response missing classification label (Positive/Negative/Neutral)")
+                    penalties.append(0.55)
+
+        elif task_type == "ner":
+            # NER responses should contain identifiable entities or a list
+            has_entities = bool(re.search(r'[A-Z][a-z]+', response))
+            has_list = bool(
+                re.search(r'[-•*]\s|^\d+[.)]', response, re.MULTILINE)
+            )
+            has_category_header = bool(
+                re.search(r'(People|Organizations?|Locations?|Dates?)\s*:', response, re.IGNORECASE)
+            )
+            if not has_entities and not has_list and not has_category_header:
+                issues.append("NER response lacks identifiable entities")
+                penalties.append(0.3)
+
+        elif task_type == "summarization":
+            # Summaries that are very short might be poor
+            if word_count < 10:
+                issues.append("Summary is suspiciously short")
+                penalties.append(0.2)
+
+        elif task_type == "reasoning":
+            # Multi-step reasoning tasks need substance.
+            # NOTE: threshold kept deliberately low (15 words) to avoid penalizing
+            # concise but correct answers from thinking-mode models.
+            if word_count < 15:
+                issues.append("Reasoning response too brief — likely incomplete")
+                penalties.append(0.4)
+
+        elif task_type == "extraction":
+            # Extraction of JSON should produce an object, not prose
+            import json as _json
+            if stripped.startswith('{') or stripped.startswith('['):
+                try:
+                    parsed = _json.loads(stripped)
+                    # A list of {key: count} items is wrong for domain-count extraction
+                    # The expected format is {"domain": count, ...}
+                    if isinstance(parsed, list):
+                        # List is acceptable for some extractions (NER-like),
+                        # but if each item is a dict with email keys, it's wrong
+                        first = parsed[0] if parsed else {}
+                        if isinstance(first, dict) and any('@' in str(k) for k in first.keys()):
+                            issues.append("Extraction returned per-user records instead of aggregated values")
+                            penalties.append(0.45)
+                except Exception:
+                    pass
+
+        return issues, penalties

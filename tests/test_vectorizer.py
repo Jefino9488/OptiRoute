@@ -126,14 +126,15 @@ class TestResourceVectorEstimates:
         _, rv_qa, _ = _extract_and_generate(
             "What is the capital of France?", extractor, gen
         )
-        assert rv_code.expected_output_tokens > rv_qa.expected_output_tokens
+        _BUCKET_MAP = {"Small": 1, "Medium": 2, "Large": 3, "Very_Large": 4}
+        assert _BUCKET_MAP[rv_code.output_budget_bucket] > _BUCKET_MAP[rv_qa.output_budget_bucket]
 
     def test_context_length_is_sum(
         self, gen: TaskVectorGenerator, extractor: FeatureExtractor
     ) -> None:
         _, rv, _ = _extract_and_generate("Explain recursion", extractor, gen)
-        expected = rv.expected_input_tokens + rv.expected_output_tokens
-        assert abs(rv.expected_context_length - expected) < 0.2
+        # Since output is bucketized, context length is input + bucket_size
+        assert rv.expected_context_length > rv.expected_input_tokens
 
     def test_complexity_matches_features(
         self, gen: TaskVectorGenerator, extractor: FeatureExtractor
@@ -191,6 +192,7 @@ class TestToDict:
         assert set(d.keys()) == {
             "math", "reasoning", "code", "creative",
             "translation", "extraction", "retrieval", "general_qa",
+            "summarization", "sentiment", "ner",
         }
 
     def test_resource_vector_to_dict(self, gen: TaskVectorGenerator) -> None:

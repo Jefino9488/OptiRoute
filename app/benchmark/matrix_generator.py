@@ -22,6 +22,31 @@ logger = structlog.get_logger(__name__)
 # the category is added to its fails_on list.
 _FAILURE_THRESHOLD: float = 0.5
 
+# Model thinking properties — hardcoded because these are inherent to the
+# Fireworks API model configuration, not derived from benchmarks.
+# Supports reasoning_effort parameter: "none", "low", "medium", "high", "max"
+# thinking_cost_multiplier: additional cost factor when thinking is enabled.
+MODEL_THINKING_PROPERTIES: dict[str, dict[str, Any]] = {
+    "local:qwen-2.5-3b": {
+        "supports_thinking": False,
+        "thinking_cost_multiplier": 1.0,
+    },
+    "minimax-m3": {
+        "supports_thinking": True,
+        "thinking_cost_multiplier": 1.8,
+    },
+    "kimi-k2p7-code": {
+        "supports_thinking": True,
+        "thinking_cost_multiplier": 1.3,
+    },
+}
+
+# Default thinking properties for unknown models
+_DEFAULT_THINKING: dict[str, Any] = {
+    "supports_thinking": False,
+    "thinking_cost_multiplier": 1.0,
+}
+
 
 class CapabilityMatrixGenerator:
     """Generate a capability matrix from benchmark evaluation results.
@@ -54,9 +79,14 @@ class CapabilityMatrixGenerator:
         """
         # Score all results
         scored_results: list[BenchmarkResult] = []
+        sample_counts: dict[str, dict[str, int]] = {}
         for model_id, results in all_results.items():
             self._evaluator.evaluate(results)
             scored_results.extend(results)
+
+            sample_counts[model_id] = {}
+            for r in results:
+                sample_counts[model_id][r.category] = sample_counts[model_id].get(r.category, 0) + 1
 
         # Aggregate scores
         aggregated = self._evaluator.aggregate_scores(scored_results)
@@ -73,7 +103,7 @@ class CapabilityMatrixGenerator:
 
         # Build updated matrix
         updated: dict[str, Any] = {}
-        
+
         # First, copy over existing models that weren't tested this time
         for model_id, data in existing_data.items():
             if model_id not in aggregated:
@@ -94,11 +124,19 @@ class CapabilityMatrixGenerator:
                 else:
                     capabilities[dim] = 0.5  # Default
 
-            # Identify failure patterns
-            fails_on: list[str] = [
+            samples: dict[str, int] = sample_counts.get(model_id, {})
+            thinking = MODEL_THINKING_PROPERTIES.get(model_id, _DEFAULT_THINKING)
+
+            # Auto-update fails_on: any category below the failure threshold
+            new_fails = sorted(
                 dim for dim, score in capabilities.items()
                 if score < _FAILURE_THRESHOLD
-            ]
+            )
+            # Preserve existing fails_on entries for untested dimensions
+            existing_fails = existing.get("fails_on", [])
+            tested_dims = set(category_scores.keys())
+            preserved = [d for d in existing_fails if d not in tested_dims]
+            combined_fails = sorted(set(new_fails + preserved))
 
             updated[model_id] = {
                 "capabilities": capabilities,
@@ -106,11 +144,15 @@ class CapabilityMatrixGenerator:
                 "cost_per_1k_output": existing.get("cost_per_1k_output", 0.0004),
                 "avg_output_multiplier": existing.get("avg_output_multiplier", 1.0),
                 "max_context": existing.get("max_context", 256000),
-                "fails_on": fails_on,
+                "fails_on": combined_fails,
+                "supports_thinking": thinking["supports_thinking"],
+                "thinking_cost_multiplier": thinking["thinking_cost_multiplier"],
+                "samples": samples,
                 "avg_latency_ms": self._compute_avg_latency(
                     all_results.get(model_id, [])
                 ),
             }
+
 
         logger.info(
             "matrix_generator.complete",
@@ -127,10 +169,18 @@ class CapabilityMatrixGenerator:
 
         Returns the generated matrix data.
         """
+        import datetime
         data = self.generate(all_results)
         self._matrix_path.parent.mkdir(parents=True, exist_ok=True)
         with self._matrix_path.open("w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d")
+        version_dir = self._matrix_path.parent / "benchmarks" / timestamp
+        version_dir.mkdir(parents=True, exist_ok=True)
+        with (version_dir / "capability_matrix.json").open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+
         logger.info("matrix_generator.saved", path=str(self._matrix_path))
         return data
 
@@ -172,31 +222,22 @@ class CapabilityMatrixGenerator:
             lines.append(f"### {category.capitalize()}\n")
             lines.append("| Model | Accuracy | Avg Latency | Avg Out Tokens | Avg Cost | Routing Rec |")
             lines.append("|---|---|---|---|---|---|")
-            
+
             for model_id in sorted(by_category[category].keys()):
                 results = by_category[category][model_id]
                 accuracy = sum(r.score for r in results) / len(results)
                 avg_latency = sum(r.latency_ms for r in results) / len(results)
                 avg_out_tokens = sum(r.tokens_output for r in results) / len(results)
                 avg_cost = sum(r.cost for r in results) / len(results)
-                
+
                 # Recommended routing threshold
                 if accuracy < _FAILURE_THRESHOLD:
                     rec = "DO NOT ROUTE"
                 else:
                     rec = f">= {accuracy - 0.05:.2f}"
-                    
+
                 lines.append(f"| {model_id} | {accuracy:.2f} | {avg_latency:.0f}ms | {avg_out_tokens:.0f} | ${avg_cost:.6f} | {rec} |")
             lines.append("")
-
-        # Failure patterns
-        lines.append("## Failure Patterns\n")
-        for model_id, scores in sorted(aggregated.items()):
-            failures = [c for c, s in scores.items() if s < _FAILURE_THRESHOLD]
-            if failures:
-                lines.append(f"- **{model_id}**: fails on {', '.join(failures)}")
-            else:
-                lines.append(f"- **{model_id}**: no critical failures")
 
         lines.append("")
 

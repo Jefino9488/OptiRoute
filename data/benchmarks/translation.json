@@ -8,5 +8,7 @@
   {"prompt": "Translate 'The quick brown fox jumps over the lazy dog' to Portuguese.", "expected_output": "A rápida raposa marrom pula sobre o cão preguiçoso", "category": "translation", "difficulty": "medium"},
   {"prompt": "Translate 'Thank you very much for your help' to Korean.", "expected_output": "도움을 주셔서 대단히 감사합니다", "category": "translation", "difficulty": "medium"},
   {"prompt": "Translate 'Life is short, learn something new every day' to Chinese.", "expected_output": "生命短暂，每天学习新事物", "category": "translation", "difficulty": "medium"},
-  {"prompt": "Translate 'The meeting will start at 3 PM' to Russian.", "expected_output": "Встреча начнётся в 15:00", "category": "translation", "difficulty": "medium"}
+  {"prompt": "The meeting will start at 3 PM' to Russian.", "expected_output": "Встреча начнётся в 15:00", "category": "translation", "difficulty": "medium"},
+  {"prompt": "Translate the following poetic verse into Spanish while preserving the meter: 'The woods are lovely, dark and deep, but I have promises to keep.'", "expected_output": "Los bosques son hermosos, oscuros y profundos, pero tengo promesas que cumplir.", "category": "translation", "difficulty": "hard"},
+  {"prompt": "Translate this legal document excerpt into French: 'The party of the first part shall indemnify and hold harmless the party of the second part.'", "expected_output": "La première partie indemnisera et dégagera de toute responsabilité la seconde partie.", "category": "translation", "difficulty": "hard"}
 ]

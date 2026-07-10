@@ -11,7 +11,7 @@ import time
 from typing import Any
 
 import structlog
-from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
+from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError, NotFoundError
 
 from app.config import get_settings
 from app.executors.base import ExecutionResult
@@ -30,17 +30,6 @@ _TEMP_MAP: dict[str, float] = {
     "general_qa": 0.4,
 }
 
-# Maximum output tokens per task type.
-_MAX_TOKENS_MAP: dict[str, int] = {
-    "code": 2048,
-    "math": 512,
-    "extraction": 1024,
-    "translation": 1024,
-    "reasoning": 1500,
-    "retrieval": 512,
-    "creative": 2048,
-    "general_qa": 1024,
-}
 
 
 class FireworksExecutor:
@@ -65,6 +54,7 @@ class FireworksExecutor:
         system_prompt: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> ExecutionResult:
         """Send a prompt to Fireworks and return the result.
 
@@ -82,6 +72,10 @@ class FireworksExecutor:
             Override for max output tokens.
         temperature : float | None
             Override for sampling temperature.
+        reasoning_effort : str | None
+            Fireworks reasoning_effort parameter.  Supported values:
+            ``"none"`` (thinking off), ``"low"``, ``"medium"``, ``"high"``,
+            ``"max"``.  ``None`` omits the parameter (model default).
 
         Returns
         -------
@@ -91,7 +85,7 @@ class FireworksExecutor:
         full_model = settings.get_model_path(model_id)
 
         temp = temperature if temperature is not None else _TEMP_MAP.get(task_type, 0.4)
-        max_tok = max_tokens or _MAX_TOKENS_MAP.get(task_type, 1024)
+        max_tok = max_tokens or 4096
 
         messages: list[dict[str, str]] = []
         if system_prompt:
@@ -104,6 +98,7 @@ class FireworksExecutor:
             task_type=task_type,
             temperature=temp,
             max_tokens=max_tok,
+            reasoning_effort=reasoning_effort,
         )
 
         start = time.perf_counter()
@@ -113,12 +108,15 @@ class FireworksExecutor:
         
         for attempt in range(max_retries):
             try:
-                response = await self._client.chat.completions.create(
-                    model=full_model,
-                    messages=messages,
-                    temperature=temp,
-                    max_tokens=max_tok,
-                )
+                kwargs: dict[str, Any] = {
+                    "model": full_model,
+                    "messages": messages,
+                    "temperature": temp,
+                    "max_tokens": max_tok,
+                }
+                if reasoning_effort is not None:
+                    kwargs["reasoning_effort"] = reasoning_effort
+                response = await self._client.chat.completions.create(**kwargs)
                 break  # Success
             except RateLimitError as exc:
                 if attempt == max_retries - 1:
@@ -137,6 +135,14 @@ class FireworksExecutor:
                     delay=delay
                 )
                 await asyncio.sleep(delay)
+            except NotFoundError as exc:
+                logger.warning("fireworks.not_found", model=model_id, error=str(exc))
+                return ExecutionResult(
+                    response="[NOT_FOUND] Model not available (404).",
+                    model_used=model_id,
+                    confidence=0.0,
+                    raw_metadata={"error": str(exc)},
+                )
             except APITimeoutError as exc:
                 logger.error("fireworks.timeout", model=model_id, error=str(exc))
                 return ExecutionResult(
@@ -161,16 +167,8 @@ class FireworksExecutor:
         tokens_in = usage.prompt_tokens if usage else 0
         tokens_out = usage.completion_tokens if usage else 0
 
-        # Compute cost.
-        matrix_path = settings.capability_matrix_path
-        # We import here to avoid circular imports at module level.
-        from app.router.capability_matrix import CapabilityMatrix
-
-        try:
-            matrix = CapabilityMatrix(matrix_path)
-            cost = matrix.estimate_cost(model_id, tokens_in, tokens_out) or 0.0
-        except Exception:
-            cost = 0.0
+        # Cost calculation is handled by the RoutingPipeline using its in-memory matrix.
+        cost = 0.0
 
         text = response.choices[0].message.content or "" if response.choices else ""
 
