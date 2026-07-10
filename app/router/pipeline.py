@@ -237,6 +237,18 @@ class RoutingPipeline:
                         reasoning="Escalated from local due to low confidence",
                     )
                     best_result = None  # will be set by Fireworks loop below
+            else:
+                # Local skipped (context/output overflow) — fall through to Fireworks
+                logger.info(
+                    "pipeline.local_skipped_fallback_fireworks",
+                    model=decision.model_selected,
+                )
+                decision = RoutingDecision(
+                    model_selected="minimax-m3",
+                    estimated_cost=0.0,
+                    predicted_accuracy=0.9,
+                    reasoning="Local skipped due to output overflow, routing to Fireworks",
+                )
 
         # 5b: Fireworks execution (with escalation loop)
         # Preprocess prompt once before the loop: compress tokens + inject
@@ -643,15 +655,16 @@ class RoutingPipeline:
             )
             return None  # Caller will fall through to Fireworks
 
-        # Output generation limit pre-check
-        # Local model is slow on CPU, so we hard-cap generation to 512 tokens.
-        # If the task requires more than 512 output tokens, skip local execution.
-        est_output = resource_dict.get("output_tokens", 512)
-        if est_output > 512:
+        # Output generation limit pre-check.
+        # If the task requires more tokens than the local model's max budget,
+        # skip local and fall through to Fireworks.
+        local_max_tokens = 2048  # matches the highest value in _MAX_TOKENS_MAP
+        est_output = resource_dict.get("output_tokens", local_max_tokens)
+        if est_output > local_max_tokens:
             logger.info(
                 "pipeline.local_output_overflow",
                 est_output=est_output,
-                max_allowed=512,
+                max_allowed=local_max_tokens,
                 model=model_id,
             )
             return None  # Caller will fall through to Fireworks
