@@ -42,6 +42,9 @@ class FeatureVector:
     is_translation: bool = False
     requires_reasoning: bool = False
     requires_retrieval: bool = False
+    is_extraction: bool = False
+    is_classification: bool = False
+    has_strict_constraint: bool = False
     input_length: int = 0
     expected_output_length: str = "medium"
     question_count: int = 0
@@ -142,6 +145,21 @@ _RETRIEVAL_KEYWORDS_RE = re.compile(
     re.IGNORECASE,
 )
 
+_EXTRACTION_KEYWORDS_RE = re.compile(
+    r"\b(?:extract|parse|identify|find\s+all|list\s+all|domains?|named\s+entities?|ingredients?)\b",
+    re.IGNORECASE,
+)
+
+_CLASSIFICATION_KEYWORDS_RE = re.compile(
+    r"\b(?:classify|sentiment|positive|negative|neutral|category|review|label)\b",
+    re.IGNORECASE,
+)
+
+_STRICT_CONSTRAINT_RE = re.compile(
+    r"\b(?:exactly|strictly|must|only|all\s+unique|carefully|rigorously|without\s+fail)\b",
+    re.IGNORECASE,
+)
+
 _QUESTION_MARK_RE = re.compile(r"\?")
 
 # Multi-step indicators (numbered lists, "first … then …", etc.)
@@ -238,6 +256,9 @@ class FeatureExtractor:
         fv.requires_reasoning = has_reasoning_kw or has_multi_step
 
         fv.requires_retrieval = bool(_RETRIEVAL_KEYWORDS_RE.search(prompt))
+        fv.is_extraction = bool(_EXTRACTION_KEYWORDS_RE.search(prompt)) or fv.json_required
+        fv.is_classification = bool(_CLASSIFICATION_KEYWORDS_RE.search(prompt))
+        fv.has_strict_constraint = bool(_STRICT_CONSTRAINT_RE.search(prompt))
 
         # -- task type (dominant) --
         fv.task_type = self._classify_task_type(fv)
@@ -282,13 +303,21 @@ class FeatureExtractor:
             scores["creative"] += 1.0
         if fv.is_translation:
             scores["translation"] += 1.0
-        if fv.json_required:
-            scores["extraction"] += 0.6
+        if fv.is_extraction:
+            scores["extraction"] += 1.0
         if fv.requires_retrieval:
             scores["retrieval"] += 0.7
+        if fv.is_classification:
+            scores["reasoning"] += 0.8
+            scores["general_qa"] += 0.5
 
         # Intent Resolution (resolving keyword collisions)
         
+        # 0. Classification overrides incidental math (e.g. rating "5/5")
+        if fv.is_classification and fv.contains_math:
+            scores["math"] *= 0.1
+            scores["reasoning"] += 1.0
+
         # 1. Creative intent overrides incidental math (e.g. "haiku 5-7-5")
         if fv.is_creative and fv.contains_math:
             scores["creative"] += 1.5 
@@ -360,12 +389,16 @@ class FeatureExtractor:
 
         # Question count factor.
         question_score = min(fv.question_count / 3.0, 1.0)
+        
+        # Strict constraints dramatically bump complexity
+        strictness_penalty = 0.3 if fv.has_strict_constraint else 0.0
 
         # Weighted combination.
         complexity = (
             0.35 * length_score
             + 0.40 * feature_score
             + 0.25 * question_score
+            + strictness_penalty
         )
 
         return round(min(max(complexity, 0.0), 1.0), 4)
