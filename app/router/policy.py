@@ -118,9 +118,12 @@ class EscalationPolicy:
         try:
             idx = model_ids.index(current_model)
         except ValueError:
-            # current_model not in eligible list (e.g. was a fallback);
+            if current_model == self.get_fallback_model():
+                logger.info("escalation.fallback_exhausted", current_model=current_model)
+                return None
+            # current_model not in eligible list (e.g. was a fallback or skipped);
             # start from the beginning.
-            logger.warning(
+            logger.info(
                 "escalation.current_model_not_in_eligible",
                 current_model=current_model,
             )

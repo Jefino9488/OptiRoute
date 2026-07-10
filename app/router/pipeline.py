@@ -190,7 +190,6 @@ class RoutingPipeline:
         escalated = False
         best_result: ExecutionResult | None = None
 
-        # 5a: Local model dispatch (when model_selected starts with "local:")
         if best_result is None and decision.model_selected.startswith("local:") and self._local:
             local_result = await self._try_local_execute(
                 prompt=prompt,
@@ -201,7 +200,7 @@ class RoutingPipeline:
             if local_result is not None:
                 best_result = local_result
                 if local_result.confidence < self._policy.confidence_threshold:
-                    # Low confidence — escalate to cheapest Fireworks model
+                    # Low confidence — escalate
                     logger.info(
                         "pipeline.local_low_confidence_escalating",
                         confidence=local_result.confidence,
@@ -209,15 +208,31 @@ class RoutingPipeline:
                     )
                     escalated = True
                     escalation_depth += 1
-                    # Override decision to use Fireworks fallback
-                    decision = RoutingDecision(
-                        model_selected="minimax-m3",
-                        estimated_cost=0.0,
-                        predicted_accuracy=0.9,
-                        reasoning="Escalated from local due to low confidence",
+                    
+                    next_model = self._policy.get_next_model(
+                        decision.model_selected, decision.alternatives_considered, escalation_depth
                     )
+                    if next_model is None:
+                        next_model = self._policy.get_fallback_model()
+                        
+                    decision.model_selected = next_model
+                    decision.reasoning = "Escalated from local due to low confidence"
                     best_result = None  # will be set by Fireworks loop below
-
+            else:
+                # Overflow skip — escalate
+                logger.info("pipeline.local_skipped_escalating")
+                escalated = True
+                escalation_depth += 1
+                
+                next_model = self._policy.get_next_model(
+                    decision.model_selected, decision.alternatives_considered, escalation_depth
+                )
+                if next_model is None:
+                    next_model = self._policy.get_fallback_model()
+                    
+                decision.model_selected = next_model
+                decision.reasoning = "Escalated from local due to overflow skip"
+                best_result = None
         # 5b: Fireworks execution (with escalation loop)
         # Preprocess prompt once before the loop: compress tokens + inject
         # anti-hallucination system prompt lines (false_memory, stale_knowledge, injection).
@@ -241,24 +256,15 @@ class RoutingPipeline:
         ):
             if best_result is not None:
                 # We're escalating — find the next model
-                eligible = self._matrix.get_capable_models(task_dict, required_accuracy)
-                for m in eligible:
-                    m["estimated_cost"] = self._matrix.estimate_cost(
-                        m["model_id"],
-                        resource_dict.get("input_tokens", 0),
-                        resource_dict.get("output_tokens", 0),
-                    )
+                eligible = decision.alternatives_considered
                 # Filter out local models from Fireworks escalation list
-                # Also restrict to models actually in ALLOWED_MODELS —
-                # prevents ValueError from get_model_path() if the matrix
-                # has models the harness hasn't permitted for this run.
+                # Also restrict to models actually in ALLOWED_MODELS
                 allowed = set(get_settings().allowed_models.keys())
                 eligible = [
                     m for m in eligible
                     if not m["model_id"].startswith("local:")
                     and m["model_id"] in allowed
                 ]
-                eligible.sort(key=lambda m: m.get("estimated_cost", float("inf")))
                 next_model = self._policy.get_next_model(
                     current_model, eligible, escalation_depth,
                 )
@@ -279,10 +285,9 @@ class RoutingPipeline:
                 break
 
             max_retries = 2
-            # Thinking models (Minimax/Kimi) need huge output windows for their reasoning traces.
-            # We use resource_dict['output_tokens'] for cost estimation, but we give the API 
-            # much more headroom to prevent wasteful truncation retries.
-            current_max_tokens = max(resource_dict.get("output_tokens", 1024), 8192)
+            # Use the vectorizer's budget output_tokens, but the retry loop will double it 
+            # if the model legitimately hits the length truncation reason.
+            current_max_tokens = resource_dict.get("output_tokens", 1024)
             for attempt in range(max_retries):
                 try:
                     result = await self._fireworks.execute(
