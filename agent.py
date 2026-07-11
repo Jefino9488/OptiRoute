@@ -59,7 +59,7 @@ INPUT_PATH = Path(os.environ.get("INPUT_PATH", "/input/tasks.json"))
 OUTPUT_PATH = Path(os.environ.get("OUTPUT_PATH", "/output/results.json"))
 
 # Batch size for concurrent processing (configurable via env var)
-BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "15"))
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "5"))
 
 
 # ---------------------------------------------------------------------------
