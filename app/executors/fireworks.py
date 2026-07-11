@@ -43,20 +43,6 @@ _TASK_MAX_TOKENS: dict[str, int] = {
     "retrieval": 400,
 }
 
-# ponytail: stop sequences prevent verbose model rambling. code stops after
-# closing fence; math stops after boxed answer; general stops after answer.
-_STOP_SEQUENCES: dict[str, list[str]] = {
-    "code": ["```", "\n\n\n"],
-    "math": ["\\boxed{", "\n\n---", "Therefore,", "The final answer"],
-    "reasoning": ["\n\n---"],
-    "general_qa": ["\n\n---", "\n\n## "],
-    "extraction": [],
-    "translation": [],
-    "retrieval": [],
-    "creative": [],
-}
-
-
 
 class FireworksExecutor:
     """Execute prompts via the Fireworks AI inference API.
@@ -70,7 +56,7 @@ class FireworksExecutor:
         self._client = AsyncOpenAI(
             api_key=settings.fireworks_api_key,
             base_url=settings.fireworks_base_url,
-            timeout=httpx.Timeout(connect=5.0, read=90.0, write=5.0, pool=10.0),
+            timeout=httpx.Timeout(connect=10.0, read=300.0, write=5.0, pool=20.0),
             max_retries=0,  # we handle retries ourselves
         )
         self._models = settings.allowed_models
@@ -148,12 +134,9 @@ class FireworksExecutor:
                     # Fireworks discounts cached tokens ~50%. Batch of same-type tasks → big input savings.
                     "extra_headers": {"x-session-affinity": f"optiroute-{task_type}"},
                 }
-                # ponytail: stop sequences cut verbose rambling. Fireworks returns
-                # finish_reason="stop" instead of "length" so no escalation trigger.
+
                 if stop_sequences:
                     kwargs["stop"] = stop_sequences
-                elif task_type in _STOP_SEQUENCES and _STOP_SEQUENCES[task_type]:
-                    kwargs["stop"] = _STOP_SEQUENCES[task_type]
                 if reasoning_effort is not None:
                     kwargs["reasoning_effort"] = reasoning_effort
                 response = await self._client.chat.completions.create(**kwargs)
