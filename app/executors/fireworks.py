@@ -30,6 +30,19 @@ _TEMP_MAP: dict[str, float] = {
     "general_qa": 0.4,
 }
 
+# ponytail: hard safety cap for direct fireworks.execute calls (pipeline usually passes a smaller value).
+# runaway outputs = the dominant cost lever, not model choice.
+_TASK_MAX_TOKENS: dict[str, int] = {
+    "code": 1200,
+    "math": 1400,
+    "reasoning": 1000,
+    "creative": 1000,
+    "general_qa": 600,
+    "extraction": 250,
+    "translation": 500,
+    "retrieval": 200,
+}
+
 
 
 class FireworksExecutor:
@@ -85,7 +98,8 @@ class FireworksExecutor:
         full_model = settings.get_model_path(model_id)
 
         temp = temperature if temperature is not None else _TEMP_MAP.get(task_type, 0.4)
-        max_tok = max_tokens or 4096
+        default_cap = _TASK_MAX_TOKENS.get(task_type, 400)
+        max_tok = max_tokens if max_tokens is not None else default_cap
 
         messages: list[dict[str, str]] = []
         if system_prompt:
@@ -113,6 +127,9 @@ class FireworksExecutor:
                     "messages": messages,
                     "temperature": temp,
                     "max_tokens": max_tok,
+                    # ponytail: pin same-task-type calls to the same replica for prompt-cache hits.
+                    # Fireworks discounts cached tokens ~50%. Batch of same-type tasks → big input savings.
+                    "extra_headers": {"x-session-affinity": f"optiroute-{task_type}"},
                 }
                 if reasoning_effort is not None:
                     kwargs["reasoning_effort"] = reasoning_effort

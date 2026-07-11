@@ -117,7 +117,6 @@ llama-server \\\n\
   --threads 1 -c 3840 \\\n\
   -b 128 --ubatch-size 128 \\\n\
   --cont-batching -np 1 \\\n\
-  --no-mmap \\\n\
   --reasoning off \\\n\
   > /app/supra_router_server.log 2>&1 &\n\
 SUPRA_PID=$!\n\
@@ -128,8 +127,7 @@ llama-server \\\n\
   --port 8080 --host 0.0.0.0 \\\n\
   --threads 2 -c 8192 \\\n\
   -b 512 --ubatch-size 512 \\\n\
-  --cont-batching -np 1 \\\n\
-  --no-mmap \\\n\
+  --cont-batching -np 4 \\\n\
   --reasoning off \\\n\
   > /app/llama_server.log 2>&1 &\n\
 LLAMA_PID=$!\n\

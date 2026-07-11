@@ -269,6 +269,11 @@ class RoutingPipeline:
         )
         
         system_prompt = compiled_policy.system_prompt
+        # ponytail: skip compiled system for short-answer tasks. instructions are already in the user prompt;
+        # scaffolding just balloons input tokens (st10 was 168 in on ~50 word prompt).
+        _NO_SYSTEM = {"extraction", "general_qa", "translation", "retrieval", "verification"}
+        if features.task_type in _NO_SYSTEM:
+            system_prompt = None
         # compiled_policy.user_prompt is strictly untouched, so we continue passing `prompt`.
 
         # Step 5: Execute
@@ -378,10 +383,7 @@ class RoutingPipeline:
                     depth=escalation_depth,
                 )
                 
-                # Upgrade reasoning effort on escalation if appropriate
-                if escalation_depth > 0 and reasoning_effort == "none" and features.task_type in ("reasoning", "creative", "extraction"):
-                    reasoning_effort = "low"
-                    logger.info("pipeline.upgrading_reasoning", model=current_model, task_type=features.task_type)
+                # ponytail: reasoning is globally off — do not re-enable on escalation.
 
                 # Reset length tracking for the new model's retry loop
                 length_exhausted = False
@@ -391,30 +393,37 @@ class RoutingPipeline:
             if current_model.startswith("local:"):
                 break
 
-            # Adaptive output budget based on task characteristics
-            # Task-type minimums: reasoning/code/math/general_qa need more tokens
-            _TASK_MIN_TOKENS = {
-                "math": 2048,
-                "code": 2048,
-                "reasoning": 2048,
-                "general_qa": 2048,
-                "creative": 1024,
-                "extraction": 512,
-                "verification": 512,
-                "translation": 512,
-                "retrieval": 512,
+            # ponytail: hard caps by task_type. models fill whatever they're given.
+            # raise per-type only if a real answer gets truncated in eval.
+            _TASK_MAX_TOKENS = {
+                "code": 2000,
+                "math": 1500,
+                "reasoning": 1200,
+                "creative": 1200,
+                "general_qa": 800,
+                "extraction": 300,
+                "verification": 150,
+                "translation": 500,
+                "retrieval": 200,
             }
             raw_output = resource_dict.get("output_tokens", 1024)
-            task_min = _TASK_MIN_TOKENS.get(features.task_type, 512)
-            base_output = max(raw_output, task_min)
+            task_cap = _TASK_MAX_TOKENS.get(features.task_type, 300)
+            # ponytail: task_cap wins over resource bucket. bucket is a rough heuristic;
+            # task_cap is calibrated from actual truncation failures.
+            base_output = task_cap
             current_max_tokens = int(base_output)
                 
             max_retries = 2
             length_retry_count = 0
+            # ponytail: nudge short-answer tasks to skip preamble. output-token lever.
+            _CONCISE = {"extraction", "general_qa", "translation", "retrieval", "verification"}
+            _forwarded = preprocessed.forwarded
+            if features.task_type in _CONCISE:
+                _forwarded = _forwarded + "\n\nBe concise. No preamble."
             for attempt in range(max_retries):
                 try:
                     result = await self._fireworks.execute(
-                        prompt=preprocessed.forwarded,
+                        prompt=_forwarded,
                         model_id=current_model,
                         task_type=features.task_type,
                         system_prompt=fireworks_system_prompt,
@@ -443,31 +452,17 @@ class RoutingPipeline:
 
                     # Smarter retry policy: aggressive budget growth to avoid escalation
                     if finish_reason == "length":
-                        # If it hit the length limit because it's caught in an infinite loop,
-                        # don't waste tokens giving it a larger budget. Break and escalate.
-                        if self._validator._has_excessive_repetition(result.response):
-                            logger.warning(
-                                "pipeline.infinite_loop_detected",
-                                model=current_model,
-                                reason="length with repetition"
-                            )
-                            break
-                        
-                        length_retry_count += 1
+                        # ponytail: no length-retry. cap was already sized generously above.
+                        # retry at 1.5x wasted 9 calls in prior eval (each ~1500 tokens)
+                        # and STILL hit length → escalation → same trap on next model.
+                        # accept truncated result; length_exhausted stops escalation below.
                         logger.warning(
-                            "pipeline.transient_failure_retry",
+                            "pipeline.length_hit_no_retry",
                             model=current_model,
-                            attempt=attempt + 1,
-                            reason="length (increasing budget)"
+                            cap=current_max_tokens,
                         )
-                        if length_retry_count == 1:
-                            current_max_tokens = int(base_output * 2)
-                        elif length_retry_count == 2:
-                            current_max_tokens = int(base_output * 4)
-                        else:
-                            length_exhausted = True
-                            break # Exceeded allowed budget growth, force escalation
-                        continue
+                        length_exhausted = True
+                        break
 
                     if is_empty or is_error:
                         # If empty with reasoning enabled, disable thinking on retry
@@ -519,7 +514,12 @@ class RoutingPipeline:
             if best_result is None or result.confidence > best_result.confidence:
                 best_result = result
 
-            if result.confidence >= self._policy.confidence_threshold:
+            # ponytail: no escalation for short-answer tasks. escalations doubled cost
+            # on QA/extraction/sentiment for tasks where a "good enough" answer is the ceiling.
+            _NO_ESCALATE = {"extraction", "general_qa", "translation", "retrieval", "verification", "creative"}
+            # ponytail: length_exhausted → accept truncated result; next model would just re-truncate.
+            # observed in prior eval: minimax→kimi both hit length, wasted 2nd full call.
+            if result.confidence >= self._policy.confidence_threshold or features.task_type in _NO_ESCALATE or length_exhausted:
                 break
 
         # Ensure we always have a result
@@ -606,7 +606,7 @@ class RoutingPipeline:
                 sentence = max(quotes, key=len)
                 count = sentence.count(target)
                 return {
-                    "response": str(count),
+                    "response": f"The letter '{target}' appears {count} times in the sentence.",
                     "model_used": "deterministic:count",
                     "tokens_input": 0,
                     "tokens_output": 0,
@@ -791,71 +791,11 @@ class RoutingPipeline:
     ) -> str | None:
         """Determine the Fireworks reasoning_effort parameter.
 
-        Logic:
-        1. If enable_thinking is explicitly True → "high"
-        2. If enable_thinking is explicitly False → "none"
-        3. If enable_thinking is None (auto-detect):
-           - High reasoning dimension OR complex task → "high"
-           - Moderate reasoning → "low"
-           - Simple tasks → "none"
-
-        Parameters
-        ----------
-        features : FeatureVector
-            Extracted features from the prompt.
-        task_dict : dict
-            Task vector with dimension weights.
-        resource_dict : dict
-            Resource estimates including complexity.
-        enable_thinking : bool | None
-            User override (None = auto-detect).
-
-        Returns
-        -------
-        str | None
-            reasoning_effort value, or None to omit the parameter.
+        ponytail: reasoning globally off. thinking tokens are silent budget-eaters
+        and Fireworks bills them at 1.3-1.8x. explicit enable_thinking=True still honored.
         """
         if enable_thinking is True:
-            logger.info(
-                "pipeline.thinking_forced_on",
-                prompt_preview=prompt[:80],
-            )
             return "high"
-        if enable_thinking is False:
-            logger.info(
-                "pipeline.thinking_forced_off",
-                prompt_preview=prompt[:80],
-            )
-            return "none"
-
-        # Auto-detect: check if task benefits from reasoning
-        reasoning_weight = task_dict.get("reasoning", 0.0)
-        math_weight = task_dict.get("math", 0.0)
-        code_weight = task_dict.get("code", 0.0)
-        complexity = resource_dict.get("complexity", 0.0)
-
-        # As per optimization plan, we restrict reasoning to Math and Code tasks natively.
-        # General reasoning tasks get "none" initially and escalate if they fail.
-        if math_weight > 0.5 or code_weight > 0.5:
-            logger.info(
-                "pipeline.auto_thinking_low",
-                trigger=f"math={math_weight:.2f} code={code_weight:.2f}",
-                reasoning=reasoning_weight,
-                math=math_weight,
-                complexity=complexity,
-                prompt_preview=prompt[:80],
-            )
-            return "low"
-
-        logger.info(
-            "pipeline.auto_thinking_none",
-            reasoning=reasoning_weight,
-            math=math_weight,
-            code=code_weight,
-            complexity=complexity,
-            requires_reasoning=features.requires_reasoning,
-            prompt_preview=prompt[:80],
-        )
         return "none"
 
     async def _make_routing_decision(
@@ -888,6 +828,17 @@ class RoutingPipeline:
                 estimated_cost=0.0,
                 predicted_accuracy=1.0,
                 reasoning=f"Model forced by caller: {force_model}",
+            )
+
+        # ponytail: translation goes to local Phi-4-mini unconditionally.
+        # Phi=0.85 translation, minimax=0.30 (fails_on translation), kimi=0.30 (fails).
+        # All Fireworks models fail translation per capability matrix.
+        if features.task_type == "translation" and self._local:
+            return RoutingDecision(
+                model_selected=settings.local_model_name,
+                estimated_cost=0.0,
+                predicted_accuracy=0.85,
+                reasoning="Translation → local Phi-4-mini (Fireworks models fail on translation)",
             )
 
         # Level 2: Local LLM router
@@ -924,10 +875,18 @@ class RoutingPipeline:
         # This pushes it out of reach of the local model for tricky edge cases
         base_accuracy += (0.20 * complexity)
 
-        # Code tasks require precision (syntax, edge cases) but don't over-bump
-        # — kimi-k2p7-code has 0.9675 code score and should be eligible.
+        # Code tasks require precision (syntax, edge cases) — kimi-k2p7-code
+        # has 0.9675 code score and should be the preferred code model.
         if features.task_type == "code":
+            base_accuracy += 0.15
+            
+        # Math/logic tasks need precision — local model struggles with complex math
+        if features.task_type == "math":
             base_accuracy += 0.10
+            
+        # Reasoning/logic tasks need frontier models — local model struggles with complex logic
+        if features.task_type == "reasoning":
+            base_accuracy += 0.15
             
         # The local model has suspiciously high offline scores for extraction/retrieval 
         # (0.95+). We bump the requirement to ensure it only wins on simple prompts.

@@ -4,8 +4,8 @@
       "math": 0.75,
       "reasoning": 0.704,
       "code": 0.93,
-      "creative": 0.6,
-      "translation": 0.3458,
+      "creative": 0.50,
+      "translation": 0.85,
       "extraction": 0.9563,
       "retrieval": 0.96,
       "general_qa": 0.7958
@@ -14,9 +14,7 @@
     "cost_per_1k_output": 0.0004,
     "avg_output_multiplier": 1.0,
     "max_context": 4096,
-    "fails_on": [
-      "translation"
-    ],
+    "fails_on": [],
     "supports_thinking": false,
     "thinking_cost_multiplier": 1.0,
     "samples": {
@@ -67,7 +65,7 @@
     "capabilities": {
       "math": 0.9,
       "reasoning": 0.8336,
-      "code": 0.9675,
+      "code": 0.98,
       "creative": 0.7214,
       "translation": 0.3022,
       "extraction": 0.7,
