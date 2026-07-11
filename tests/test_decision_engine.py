@@ -71,7 +71,7 @@ def test_math_task_routes_to_cheapest(engine: DecisionEngine) -> None:
     decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
     # minimax-m3 is the cheapest that clears 0.75 accuracy threshold for math
-    assert decision.model_selected in ("minimax-m3", "local:phi-4-mini", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
+    assert decision.model_selected in ("minimax-m3", "local:qwen2.5-coder-7b", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
     assert decision.predicted_accuracy >= 0.75
 
 
@@ -134,7 +134,7 @@ def test_regression_math_task_routes_to_llm(engine: DecisionEngine) -> None:
     decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
     assert not decision.model_selected.startswith("deterministic:")
-    assert decision.model_selected in ("minimax-m3", "local:phi-4-mini", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
+    assert decision.model_selected in ("minimax-m3", "local:qwen2.5-coder-7b", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
     assert decision.predicted_accuracy >= 0.75
 
 
@@ -148,7 +148,7 @@ def test_regression_json_task_routes_to_llm(engine: DecisionEngine) -> None:
     decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
     assert not decision.model_selected.startswith("deterministic:")
-    assert decision.model_selected in ("minimax-m3", "local:phi-4-mini", "kimi-k2p7-code", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
+    assert decision.model_selected in ("minimax-m3", "local:qwen2.5-coder-7b", "kimi-k2p7-code", "gemma-4-26b-a4b-it", "gemma-4-31b-it-nvfp4", "gemma-4-31b-it")
 
 
 def test_regression_haiku_routes_to_llm(engine: DecisionEngine) -> None:
@@ -161,7 +161,7 @@ def test_regression_haiku_routes_to_llm(engine: DecisionEngine) -> None:
     decision = engine.select_model(task_vector, resource_vector, risk_vector, required_accuracy=0.75)
 
     assert not decision.model_selected.startswith("deterministic:")
-    assert decision.model_selected in ("minimax-m3", "local:phi-4-mini")
+    assert decision.model_selected in ("minimax-m3", "local:qwen2.5-coder-7b")
 
 
 
@@ -200,7 +200,7 @@ def test_kimi_cost_includes_output_multiplier(
     output_tokens = 1000
 
     kimi_cost = capability_matrix.estimate_cost("kimi-k2p7-code", input_tokens, output_tokens)
-    local_cost = capability_matrix.estimate_cost("local:phi-4-mini", input_tokens, output_tokens)
+    local_cost = capability_matrix.estimate_cost("local:qwen2.5-coder-7b", input_tokens, output_tokens)
 
     assert kimi_cost is not None
     assert local_cost is not None

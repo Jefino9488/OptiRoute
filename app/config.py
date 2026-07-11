@@ -60,7 +60,7 @@ class Settings(BaseSettings):
         description="Maximum number of escalation retries",
     )
     confidence_threshold: float = Field(
-        default=0.9,
+        default=0.8,
         ge=0.0,
         le=1.0,
         description="Minimum confidence score before escalation is triggered",
@@ -84,12 +84,12 @@ class Settings(BaseSettings):
         description="Enable local model inference for $0 Fireworks token cost",
     )
     local_model_path: str = Field(
-        default="models/Phi-4-mini-instruct-Q4_K_M.gguf",
+        default="models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
         description="Path to GGUF model weights file served by llama-server",
     )
     local_model_name: str = Field(
-        default="local:phi-4-mini",
-        description="Local model identifier in the capability matrix",
+        default="local:qwen2.5-coder-7b",
+        description="Local model identifier",
     )
     local_model_context_length: int = Field(
         default=8192,

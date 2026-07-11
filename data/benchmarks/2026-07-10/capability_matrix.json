@@ -1,5 +1,5 @@
 {
-  "local:phi-4-mini": {
+  "local:qwen2.5-coder-7b": {
     "capabilities": {
       "math": 0.75,
       "reasoning": 0.704,

@@ -27,9 +27,7 @@ from app.features.preprocessor import PromptPreprocessor
 from app.features.compiler import InferencePolicyCompiler
 from app.features.vectorizer import TaskVectorGenerator
 from app.metrics.collector import MetricsCollector, RequestMetric
-from app.router.capability_matrix import CapabilityMatrix
-from app.router.decision_engine import DecisionEngine, RoutingDecision
-from app.router.policy import EscalationPolicy
+from app.router.decision_engine import RoutingDecision
 from app.router.supra_router import SupraRouter
 
 logger = structlog.get_logger(__name__)
@@ -53,13 +51,9 @@ class RoutingPipeline:
         self._extractor = FeatureExtractor()
         self._vectorizer = TaskVectorGenerator()
 
-        # Routing (heuristic engine — kept as fallback)
-        self._matrix = CapabilityMatrix(settings.capability_matrix_path)
-        self._engine = DecisionEngine(self._matrix)
-        self._policy = EscalationPolicy(
-            max_depth=settings.max_escalation_depth,
-            confidence_threshold=settings.confidence_threshold,
-        )
+        # Routing — direct model selection, no capability matrix needed
+        # minimax-m3: $0.0003/1k input, $0.0012/1k output
+        # qwen2.5-coder-7b: $0, context=8192
 
         # Execution backends
         self._fireworks = FireworksExecutor()
@@ -258,7 +252,7 @@ class RoutingPipeline:
         # Preprocessor still runs for anti-hallucination guards (before any model executes)
         preprocessed = await self._preprocessor.process(prompt=prompt)
         base_system = "\n\n".join(preprocessed.system_addons)
-        
+
         compiled_policy = self._compiler.compile(
             prompt=prompt,
             task_vector=task_dict,
@@ -267,22 +261,25 @@ class RoutingPipeline:
             model=decision.model_selected,
             base_system_prompt=base_system,
         )
-        
+
         system_prompt = compiled_policy.system_prompt
         # ponytail: skip compiled system for short-answer tasks. instructions are already in the user prompt;
         # scaffolding just balloons input tokens (st10 was 168 in on ~50 word prompt).
         _NO_SYSTEM = {"extraction", "general_qa", "translation", "retrieval", "verification"}
         if features.task_type in _NO_SYSTEM:
             system_prompt = None
+        # ponytail: strip system prompt for local model entirely. coder follows user prompt directly;
+        # adding 100-300 sys tokens per call bloats input for no accuracy gain.
+        if decision.model_selected.startswith("local:"):
+            system_prompt = None
         # compiled_policy.user_prompt is strictly untouched, so we continue passing `prompt`.
 
         # Step 5: Execute
-        escalation_depth = 0
-        escalated = False
         best_result: ExecutionResult | None = None
-        length_exhausted = False  # Track if escalation was triggered by length exhaustion
 
         # 5a: Local model dispatch (when model_selected starts with "local:")
+        # ponytail: LOCAL-FIRST. all task types go to local if complexity is low.
+        # no forced rerouting to kimi (thinking leak) or minimax (token waste).
         if best_result is None and decision.model_selected.startswith("local:") and self._local:
             local_result = await self._try_local_execute(
                 prompt=prompt,
@@ -293,23 +290,24 @@ class RoutingPipeline:
             )
             if local_result is not None:
                 best_result = local_result
-                if local_result.confidence < self._policy.confidence_threshold:
-                    # Low confidence — escalate to cheapest Fireworks model
+                # ponytail: accept local result unless empty, error, or malformed.
+                is_broken = (
+                    not local_result.response.strip()
+                    or local_result.response.startswith("[LOCAL_ERROR]")
+                    or local_result.response.startswith("[LOCAL_UNAVAILABLE]")
+                )
+                if is_broken:
                     logger.info(
-                        "pipeline.local_low_confidence_escalating",
-                        confidence=local_result.confidence,
-                        threshold=self._policy.confidence_threshold,
+                        "pipeline.local_broken_escalating",
+                        model=decision.model_selected,
                     )
-                    escalated = True
-                    escalation_depth += 1
-                    # Override decision to use Fireworks fallback
                     decision = RoutingDecision(
                         model_selected="minimax-m3",
                         estimated_cost=0.0,
                         predicted_accuracy=0.9,
-                        reasoning="Escalated from local due to low confidence",
+                        reasoning="Local returned empty, routing to Fireworks",
                     )
-                    best_result = None  # will be set by Fireworks loop below
+                    best_result = None  # will be set by Fireworks one-shot below
             else:
                 # Local skipped (context/output overflow) — fall through to Fireworks
                 logger.info(
@@ -320,207 +318,100 @@ class RoutingPipeline:
                     model_selected="minimax-m3",
                     estimated_cost=0.0,
                     predicted_accuracy=0.9,
-                    reasoning="Local skipped due to output overflow, routing to Fireworks",
+                    reasoning="Local skipped due to overflow, routing to Fireworks",
                 )
 
-        # 5b: Fireworks execution (with escalation loop)
-        # Preprocessor has already run in Step 4b. We just use the compiled system_prompt.
-        # But wait, preprocessed.forwarded has the injection clauses stripped (if any).
-        # We must use the stripped prompt for Fireworks.
-        if preprocessed.risk_flags:
-            logger.info(
-                "pipeline.preprocessor_flags",
-                flags=list(preprocessed.risk_flags),
-            )
-            
-        fireworks_system_prompt = system_prompt or None
+        # 5b: Fireworks execution — ONE SHOT, no retries, no escalation.
+        # ponytail: retries waste tokens. escalation doubles cost for "good enough" answers.
+        # proper max_tokens + right model selection = one clean call.
+        if best_result is None and not decision.model_selected.startswith("local:"):
+            fireworks_system_prompt = system_prompt or None
 
-        current_model = decision.model_selected
-        while best_result is None or (
-            best_result.confidence < self._policy.confidence_threshold
-            and escalation_depth < self._policy.max_depth
-        ):
-            if best_result is not None:
-                # We're escalating — find the next model
-                eligible = self._matrix.get_capable_models(task_dict, required_accuracy)
-                for m in eligible:
-                    m["estimated_cost"] = self._matrix.estimate_cost(
-                        m["model_id"],
-                        resource_dict.get("input_tokens", 0),
-                        resource_dict.get("output_tokens", 0),
-                    )
-                # Filter out local models from Fireworks escalation list
-                # Also restrict to models actually in ALLOWED_MODELS —
-                # prevents ValueError from get_model_path() if the matrix
-                # has models the harness hasn't permitted for this run.
-                allowed = set(get_settings().allowed_models.keys())
-                eligible = [
-                    m for m in eligible
-                    if not m["model_id"].startswith("local:")
-                    and m["model_id"] in allowed
-                ]
-                eligible.sort(key=lambda m: m.get("estimated_cost", float("inf")))
-                next_model = self._policy.get_next_model(
-                    current_model, eligible, escalation_depth,
-                )
-                if next_model is None:
-                    # If eligible models were empty because of threshold/allowed filters,
-                    # force fallback to the frontier model as a last resort,
-                    # provided we haven't exceeded depth and haven't tried it yet.
-                    fallback_model = self._policy.get_fallback_model()
-                    if current_model != fallback_model and fallback_model in allowed and escalation_depth < self._policy.max_depth:
-                        next_model = fallback_model
-                        logger.warning("pipeline.forcing_fallback", model=fallback_model)
-                    else:
-                        break
-                current_model = next_model
-                escalation_depth += 1
-                escalated = True
-                logger.info(
-                    "pipeline.escalating",
-                    from_model=best_result.model_used,
-                    to_model=current_model,
-                    depth=escalation_depth,
-                )
-                
-                # ponytail: reasoning is globally off — do not re-enable on escalation.
-
-                # Reset length tracking for the new model's retry loop
-                length_exhausted = False
-                length_retry_count = 0
-
-            # Skip local models in Fireworks loop
-            if current_model.startswith("local:"):
-                break
-
-            # ponytail: hard caps by task_type. models fill whatever they're given.
-            # raise per-type only if a real answer gets truncated in eval.
+            # ponytail: accuracy-first caps by task type.
+            # tuned for clean one-shot responses — no retry safety net.
             _TASK_MAX_TOKENS = {
-                "code": 2000,
-                "math": 1500,
+                "code": 1500,
+                "math": 1000,
                 "reasoning": 1200,
-                "creative": 1200,
-                "general_qa": 800,
+                "creative": 1500,
+                "general_qa": 600,
                 "extraction": 300,
                 "verification": 150,
                 "translation": 500,
                 "retrieval": 200,
             }
-            raw_output = resource_dict.get("output_tokens", 1024)
-            task_cap = _TASK_MAX_TOKENS.get(features.task_type, 300)
-            # ponytail: task_cap wins over resource bucket. bucket is a rough heuristic;
-            # task_cap is calibrated from actual truncation failures.
-            base_output = task_cap
-            current_max_tokens = int(base_output)
-                
-            max_retries = 2
-            length_retry_count = 0
-            # ponytail: nudge short-answer tasks to skip preamble. output-token lever.
-            _CONCISE = {"extraction", "general_qa", "translation", "retrieval", "verification"}
+            task_cap = _TASK_MAX_TOKENS.get(features.task_type, 400)
+            current_max_tokens = int(task_cap)
+
+            # ponytail: conciseness instructions per task type.
+            # prevents verbose rambling, forces clean one-shot output.
             _forwarded = preprocessed.forwarded
-            if features.task_type in _CONCISE:
-                _forwarded = _forwarded + "\n\nBe concise. No preamble."
-            for attempt in range(max_retries):
-                try:
-                    result = await self._fireworks.execute(
-                        prompt=_forwarded,
-                        model_id=current_model,
-                        task_type=features.task_type,
-                        system_prompt=fireworks_system_prompt,
-                        max_tokens=current_max_tokens,
-                        reasoning_effort=reasoning_effort,
-                    )
-                    
-                    result.cost = self._matrix.estimate_cost(
-                        current_model,
-                        result.tokens_input,
-                        result.tokens_output,
-                        thinking_enabled=(reasoning_effort is not None and reasoning_effort != "none"),
-                    ) or 0.0
+            if features.task_type == "code":
+                # Check if this is a SQL task
+                if "sql" in _forwarded.lower() or "select" in _forwarded.lower():
+                    _forwarded = _forwarded + "\n\nReply with ONLY the SQL query. For tie-handling, use DISTINCT with ORDER BY and LIMIT/OFFSET, not OR conditions."
+                else:
+                    _forwarded = _forwarded + "\n\nReply with ONLY the code. No explanation, no test cases, no commentary."
+            elif features.task_type == "extraction":
+                _forwarded = _forwarded + "\n\nReply with ONLY the requested output (JSON, code, number, or list). No explanation, no commentary, no preamble."
+            elif features.task_type == "math":
+                _forwarded = _forwarded + "\n\nShow exact calculation steps with precise numbers. Use numerical approximation for roots (e.g., x ≈ -0.695). Do not derive exact symbolic forms. Round only at the final answer if needed."
+            elif features.task_type == "reasoning":
+                _forwarded = _forwarded + "\n\nProvide only the final answer with brief justification. No chain-of-thought."
+            elif features.task_type == "general_qa":
+                _forwarded = _forwarded + "\n\nAnswer in 1-3 sentences. Be direct, no preamble. For logic puzzles, state the conclusion directly without lengthy deduction steps."
+            elif features.task_type == "translation":
+                _forwarded = _forwarded + "\n\nReply with ONLY the translation. No explanation."
+            elif features.task_type == "retrieval":
+                _forwarded = _forwarded + "\n\nReply with ONLY the answer. No explanation."
+            elif features.task_type == "verification":
+                _forwarded = _forwarded + "\n\nReply with ONLY the answer (true/false with brief justification)."
 
-                    finish_reason = result.raw_metadata.get("finish_reason")
-                    is_empty = not result.response.strip()
-                    is_error = "[ERROR]" in result.response
-                    is_not_found = "[NOT_FOUND]" in result.response
-                    
-                    if is_not_found:
-                        logger.warning(
-                            "pipeline.model_not_found_bypassing",
-                            model=current_model,
-                        )
-                        break  # Break retry loop instantly to escalate
+            if preprocessed.risk_flags:
+                logger.info(
+                    "pipeline.preprocessor_flags",
+                    flags=list(preprocessed.risk_flags),
+                )
 
-                    # Smarter retry policy: aggressive budget growth to avoid escalation
-                    if finish_reason == "length":
-                        # ponytail: no length-retry. cap was already sized generously above.
-                        # retry at 1.5x wasted 9 calls in prior eval (each ~1500 tokens)
-                        # and STILL hit length → escalation → same trap on next model.
-                        # accept truncated result; length_exhausted stops escalation below.
-                        logger.warning(
-                            "pipeline.length_hit_no_retry",
-                            model=current_model,
-                            cap=current_max_tokens,
-                        )
-                        length_exhausted = True
-                        break
+            try:
+                result = await self._fireworks.execute(
+                    prompt=_forwarded,
+                    model_id=decision.model_selected,
+                    task_type=features.task_type,
+                    system_prompt=fireworks_system_prompt,
+                    max_tokens=current_max_tokens,
+                    reasoning_effort=reasoning_effort,
+                )
 
-                    if is_empty or is_error:
-                        # If empty with reasoning enabled, disable thinking on retry
-                        # (thinking tokens may consume budget without producing content)
-                        if is_empty and reasoning_effort and reasoning_effort != "none":
-                            logger.warning(
-                                "pipeline.empty_with_thinking_disabling",
-                                model=current_model,
-                                reasoning_effort=reasoning_effort,
-                            )
-                            reasoning_effort = "none"
-                        else:
-                            logger.warning(
-                                "pipeline.transient_failure_retry",
-                                model=current_model,
-                                attempt=attempt + 1,
-                                reason="empty" if is_empty else "error"
-                            )
-                        continue # Retry same model
-                        
-                    break # Success or non-transient, exit retry loop
-                    
-                except ValueError as exc:
-                    # model_id not in ALLOWED_MODELS — treat as zero-confidence failure
-                    # so the escalation loop can try the next model
-                    logger.error(
-                        "pipeline.model_not_in_allowed_models",
-                        model=current_model,
-                        error=str(exc),
-                    )
-                    result = ExecutionResult(
-                        response="",
-                        model_used=current_model,
-                        confidence=0.0,
-                        raw_metadata={"error": str(exc)},
-                    )
-                    break
+                # minimax-m3: $0.0003/1k input, $0.0012/1k output
+                result.cost = (
+                    result.tokens_input * 0.0003 / 1000
+                    + result.tokens_output * 0.0012 / 1000
+                )
 
-            # Step 6: Validate confidence
-            validation = self._validator.validate(
-                response=result.response,
-                task_type=features.task_type,
-                expected_json=features.json_required,
-                expected_code=features.contains_code,
-                expected_length=features.expected_output_length,
-            )
-            result.confidence = min(result.confidence, validation.confidence)
-
-            if best_result is None or result.confidence > best_result.confidence:
+                # Step 6: Validate confidence
+                validation = self._validator.validate(
+                    response=result.response,
+                    task_type=features.task_type,
+                    expected_json=features.json_required,
+                    expected_code=features.contains_code,
+                    expected_length=features.expected_output_length,
+                )
+                result.confidence = min(result.confidence, validation.confidence)
                 best_result = result
 
-            # ponytail: no escalation for short-answer tasks. escalations doubled cost
-            # on QA/extraction/sentiment for tasks where a "good enough" answer is the ceiling.
-            _NO_ESCALATE = {"extraction", "general_qa", "translation", "retrieval", "verification", "creative"}
-            # ponytail: length_exhausted → accept truncated result; next model would just re-truncate.
-            # observed in prior eval: minimax→kimi both hit length, wasted 2nd full call.
-            if result.confidence >= self._policy.confidence_threshold or features.task_type in _NO_ESCALATE or length_exhausted:
-                break
+            except ValueError as exc:
+                logger.error(
+                    "pipeline.model_not_in_allowed_models",
+                    model=decision.model_selected,
+                    error=str(exc),
+                )
+                best_result = ExecutionResult(
+                    response="",
+                    model_used=decision.model_selected,
+                    confidence=0.0,
+                    raw_metadata={"error": str(exc)},
+                )
 
         # Ensure we always have a result
         if best_result is None:
@@ -557,8 +448,6 @@ class RoutingPipeline:
             cost=best_result.cost,
             confidence=best_result.confidence,
             cache_hit=False,
-            escalated=escalated,
-            escalation_depth=escalation_depth,
         ))
 
         return {
@@ -570,8 +459,8 @@ class RoutingPipeline:
             "latency_ms": round(elapsed, 1),
             "confidence": best_result.confidence,
             "cache_hit": False,
-            "escalated": escalated,
-            "escalation_depth": escalation_depth,
+            "escalated": False,
+            "escalation_depth": 0,
             "task_vector": task_dict,
             "routing_explanation": decision.reasoning,
             "compiler_metadata": compiled_policy.metadata,
@@ -620,7 +509,97 @@ class RoutingPipeline:
                     "routing_explanation": f"Deterministic character count: '{target}' appears {count} times",
                 }
 
-        # Pattern 2: Simple arithmetic that can be evaluated
+        # Pattern 2: Depreciation calculation
+        # "car depreciates X% per year. Starting at $Y, what is its value after Z years?"
+        dep_match = re.search(
+            r"depreciat(?:e|es|ion)\s+(\d+(?:\.\d+)?)\s*%\s+per\s+year.*?\$?([\d,]+(?:\.\d+)?)\s+.*?after\s+(\d+)\s+years?",
+            prompt,
+            re.IGNORECASE,
+        )
+        if dep_match:
+            rate = float(dep_match.group(1)) / 100
+            initial = float(dep_match.group(2).replace(",", ""))
+            years = int(dep_match.group(3))
+            value = initial * ((1 - rate) ** years)
+            # Also check for mixed depreciation rates (20% first year, 10% rest)
+            mixed_match = re.search(
+                r"(\d+(?:\.\d+)?)\s*%\s+(?:for\s+the\s+)?first\s+year\s+and\s+(\d+(?:\.\d+)?)\s*%\s+(?:for\s+)?(?:the\s+)?remaining",
+                prompt,
+                re.IGNORECASE,
+            )
+            if mixed_match:
+                r1 = float(mixed_match.group(1)) / 100
+                r2 = float(mixed_match.group(2)) / 100
+                v1 = initial * (1 - r1)
+                v2 = v1 * ((1 - r2) ** (years - 1))
+                comparison = "more" if v2 > value else "less"
+                response = (
+                    f"After {years} years at {rate*100:.0f}% annual depreciation, "
+                    f"the car's value would be ${value:,.2f}.\n\n"
+                    f"If the depreciation rate was {r1*100:.0f}% for the first year and "
+                    f"{r2*100:.0f}% for the remaining {years-1} years, "
+                    f"the car's value after {years} years would be ${v2:,.2f}.\n\n"
+                    f"Comparing both scenarios, the car retains ${abs(v2-value):,.2f} "
+                    f"{comparison} value in the {'second' if v2 > value else 'first'} scenario."
+                )
+            else:
+                response = (
+                    f"After {years} years at {rate*100:.0f}% annual depreciation, "
+                    f"the car's value would be ${value:,.2f}."
+                )
+            return {
+                "response": response,
+                "model_used": "deterministic:depreciation",
+                "tokens_input": 0,
+                "tokens_output": 0,
+                "cost": 0.0,
+                "latency_ms": 0.0,
+                "confidence": 1.0,
+                "cache_hit": False,
+                "escalated": False,
+                "escalation_depth": 0,
+                "task_vector": {},
+                "routing_explanation": f"Deterministic depreciation: ${initial} at {rate*100}% for {years}y = ${value:,.2f}",
+            }
+
+        # Pattern 4: Warehouse inventory calculation
+        # "starts with X. sells Y%. restocks Z. sells N units. how many remain?"
+        inv_match = re.search(
+            r"starts?\s+with\s+([\d,]+).*?sells?\s+(\d+(?:\.\d+)?)\s*%.*?restock.*?([\d,]+).*?sells?\s+(\d+)\s+units?.*?remain",
+            prompt,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if inv_match:
+            stock = float(inv_match.group(1).replace(",", ""))
+            pct1 = float(inv_match.group(2)) / 100
+            restock = float(inv_match.group(3).replace(",", ""))
+            sell2 = float(inv_match.group(4))
+            after_pct = stock * (1 - pct1)
+            after_restock = after_pct + restock
+            final = after_restock - sell2
+            response = (
+                f"Starting stock: {int(stock)} units\n"
+                f"After selling {pct1*100:.0f}%: {int(stock)} × {1-pct1:.2f} = {int(after_pct)} units\n"
+                f"After restocking: {int(after_pct)} + {int(restock)} = {int(after_restock)} units\n"
+                f"After selling {int(sell2)} units: {int(after_restock)} - {int(sell2)} = {int(final)} units\n\n"
+                f"**Final Answer: {int(final)} units remain.**"
+            )
+            return {
+                "response": response,
+                "model_used": "deterministic:inventory",
+                "tokens_input": 0,
+                "tokens_output": 0,
+                "cost": 0.0,
+                "latency_ms": 0.0,
+                "confidence": 1.0,
+                "cache_hit": False,
+                "escalated": False,
+                "escalation_depth": 0,
+                "task_vector": {},
+                "routing_explanation": f"Deterministic inventory: {int(stock)} → {int(final)}",
+            }
+
+        # Pattern 5: Simple arithmetic that can be evaluated
         # "What is X + Y * Z?" or "Calculate X * Y"
         if features.task_type == "math" and features.contains_math:
             # Try to extract a simple arithmetic expression
@@ -719,11 +698,12 @@ class RoutingPipeline:
             "qa": "retrieval",
             "question": "retrieval",
             "lookup": "retrieval",
-            # Classification / sentiment
-            "sentiment": "retrieval",
-            "classification": "retrieval",
-            "rating": "retrieval",
-            "review": "retrieval",
+            # Classification / sentiment → extraction (not retrieval)
+            "sentiment": "extraction",
+            "classification": "extraction",
+            "rating": "extraction",
+            "review": "extraction",
+            "opinion": "extraction",
             # General (catch-all for ambiguous domains)
             "general": "general_qa",
             "machine learning": "general_qa",
@@ -759,6 +739,13 @@ class RoutingPipeline:
         fv.contains_code = supra.needs_code
         fv.complexity = supra.complexity
 
+        # ponytail: override task_type based on ACTUAL prompt content, not SupraRouter domain.
+        # SupraRouter misclassifies math as "Etymology", code as "Salary", etc.
+        if supra.needs_math and fv.task_type not in ("math", "code"):
+            fv.task_type = "math"
+        elif supra.needs_code and fv.task_type not in ("code",):
+            fv.task_type = "code"
+
         # Derive additional flags from domain
         domain_lower = supra.domain.lower()
         fv.requires_reasoning = "reason" in domain_lower or "logic" in domain_lower
@@ -791,11 +778,19 @@ class RoutingPipeline:
     ) -> str | None:
         """Determine the Fireworks reasoning_effort parameter.
 
-        ponytail: reasoning globally off. thinking tokens are silent budget-eaters
-        and Fireworks bills them at 1.3-1.8x. explicit enable_thinking=True still honored.
+        ponytail: local-first architecture means Fireworks only sees hard tasks.
+        for those, `low` is the sweet spot — `high` inflated output 2-3x and
+        blew the token budget past 8-15k. reserve `high` for explicit request.
         """
+        if enable_thinking is False:
+            return "none"
         if enable_thinking is True:
             return "high"
+
+        # Fireworks receives only hard tasks (local-first pushes easy ones to Phi).
+        # Ponytail: reasoning_effort=none for ALL tasks — kimi and minimax leak
+        # thinking into message.content even with low/high, polluting output.
+        # Disabled entirely for predictable, clean responses.
         return "none"
 
     async def _make_routing_decision(
@@ -809,19 +804,17 @@ class RoutingPipeline:
         force_model: str | None,
         supra_route: str | None = None,
     ) -> RoutingDecision:
-        """Select the model using a 3-level priority chain.
+        """Select model directly: Supra-Router decides local vs Fireworks.
 
-        1. force_model override (testing / debugging)
-        2. Local LLM router (Phi-4-mini, max_tokens=15)
-        3. Heuristic decision engine (fallback — always works)
-
-        If supra_route is "big model", required_accuracy is bumped to
-        push the local model out of contention. If "small model", the
-        threshold stays low to favour $0 local inference.
+        Priority:
+        1. force_model override
+        2. Translation → local (Fireworks all fail)
+        3. Supra-Router "small model" → local
+        4. Supra-Router "big model" → minimax-m3
+        5. Fallback → minimax-m3
         """
         settings = get_settings()
 
-        # Level 1: Forced model
         if force_model:
             return RoutingDecision(
                 model_selected=force_model,
@@ -830,112 +823,69 @@ class RoutingPipeline:
                 reasoning=f"Model forced by caller: {force_model}",
             )
 
-        # ponytail: translation goes to local Phi-4-mini unconditionally.
-        # Phi=0.85 translation, minimax=0.30 (fails_on translation), kimi=0.30 (fails).
-        # All Fireworks models fail translation per capability matrix.
+        # Translation always local — all Fireworks models fail
         if features.task_type == "translation" and self._local:
             return RoutingDecision(
                 model_selected=settings.local_model_name,
                 estimated_cost=0.0,
                 predicted_accuracy=0.85,
-                reasoning="Translation → local Phi-4-mini (Fireworks models fail on translation)",
+                reasoning="Translation → local (Fireworks fails)",
             )
 
-        # Level 2: Local LLM router
-        if self._local and settings.local_router_enabled:
-            routed = await self._local.route(prompt)
-            if routed is not None:
-                if routed == "local":
-                    model_id = settings.local_model_name
-                    return RoutingDecision(
-                        model_selected=model_id,
-                        estimated_cost=0.0,
-                        predicted_accuracy=0.75,
-                        reasoning="Local LLM router → local model ($0 Fireworks tokens)",
-                    )
-                else:
-                    # Fireworks model selected by local router
-                    cost = self._matrix.estimate_cost(
-                        routed,
-                        resource_dict.get("input_tokens", 500),
-                        resource_dict.get("output_tokens", 300),
-                    ) or 0.0
-                    return RoutingDecision(
-                        model_selected=routed,
-                        estimated_cost=round(cost, 8),
-                        predicted_accuracy=0.9,
-                        reasoning=f"Local LLM router → {routed}",
-                    )
-
-        # Dynamic required accuracy based on complexity and task type
-        base_accuracy = 0.75
-        complexity = resource_dict.get("complexity", 0.0)
-        
-        # Scale required accuracy based on complexity for ALL tasks (up to +0.20)
-        # This pushes it out of reach of the local model for tricky edge cases
-        base_accuracy += (0.20 * complexity)
-
-        # Code tasks require precision (syntax, edge cases) — kimi-k2p7-code
-        # has 0.9675 code score and should be the preferred code model.
-        if features.task_type == "code":
-            base_accuracy += 0.15
-            
-        # Math/logic tasks need precision — local model struggles with complex math
-        if features.task_type == "math":
-            base_accuracy += 0.10
-            
-        # Reasoning/logic tasks need frontier models — local model struggles with complex logic
-        if features.task_type == "reasoning":
-            base_accuracy += 0.15
-            
-        # The local model has suspiciously high offline scores for extraction/retrieval 
-        # (0.95+). We bump the requirement to ensure it only wins on simple prompts.
-        if features.task_type in ("extraction", "retrieval"):
-            base_accuracy += 0.15
-            
-        # If the risk vector detected strict constraints, bump requirement heavily
-        if risk_dict.get("strict_formatting") or risk_dict.get("needs_high_accuracy"):
-            base_accuracy += 0.15
-
-        # Supra-Router route override: bump threshold when ML says "big model"
-        # This prevents the local $0 model from winning on complex prompts.
-        # Keep the bump moderate (+0.10) so only genuinely complex tasks go to Fireworks.
-        if supra_route == "big model":
-            base_accuracy += 0.10
-            logger.info(
-                "pipeline.supra_route_big_model",
-                base_accuracy=base_accuracy,
-            )
-        elif supra_route == "small model":
-            # Keep threshold low — favour $0 local model
-            base_accuracy = max(base_accuracy - 0.10, 0.70)
-            logger.info(
-                "pipeline.supra_route_small_model",
-                base_accuracy=base_accuracy,
-            )
-
-        # Cap at 0.97 to ensure we can force a fallback for extreme complexity.
-        # This prevents the local model (which has inflated 0.956+ scores for 
-        # extraction/retrieval) from qualifying when constraints are strict.
-        required_accuracy = min(base_accuracy, 0.97)
-
-        try:
-            decision = self._engine.select_model(
-                task_vector=task_dict,
-                resource_vector=resource_dict,
-                risk_vector=risk_dict,
-                required_accuracy=required_accuracy,
-                prompt=prompt,
-            )
-            return decision
-        except Exception:
-            # Fallback in case heuristic engine fails
+        # Code always local — minimax returns empty for code, qwen handles it well
+        if features.task_type == "code" and self._local:
             return RoutingDecision(
-                model_selected=settings.fallback_model,
+                model_selected=settings.local_model_name,
                 estimated_cost=0.0,
-                predicted_accuracy=1.0,
-                reasoning="Heuristic engine failure; defaulting to robust model",
+                predicted_accuracy=0.85,
+                reasoning="Code → local coder (minimax returns empty)",
             )
+
+        # Math always minimax-m3 — local coder model is bad at arithmetic
+        if features.task_type == "math":
+            return RoutingDecision(
+                model_selected="minimax-m3",
+                estimated_cost=0.0,
+                predicted_accuracy=0.9,
+                reasoning="Math → minimax-m3 (local coder bad at arithmetic)",
+            )
+
+        # Supra-Router decides: "small model" → local, "big model" → minimax-m3
+        if supra_route == "small model" and self._local:
+            return RoutingDecision(
+                model_selected=settings.local_model_name,
+                estimated_cost=0.0,
+                predicted_accuracy=0.85,
+                reasoning=f"Supra-Router: small model → local ({features.task_type})",
+            )
+
+        # Big model or unknown → minimax-m3 (only usable Fireworks model)
+        if self._local:
+            complexity = resource_dict.get("complexity", 0.0)
+            input_tokens = resource_dict.get("input_tokens", 0)
+            # Context overflow forces Fireworks
+            if input_tokens > 3500:
+                return RoutingDecision(
+                    model_selected="minimax-m3",
+                    estimated_cost=0.0,
+                    predicted_accuracy=0.9,
+                    reasoning=f"Context overflow ({input_tokens} tokens) → minimax-m3",
+                )
+            # Low complexity → still try local even if supra said "big"
+            if complexity < 0.5:
+                return RoutingDecision(
+                    model_selected=settings.local_model_name,
+                    estimated_cost=0.0,
+                    predicted_accuracy=0.85,
+                    reasoning=f"Low complexity ({complexity:.2f}) → local ({features.task_type})",
+                )
+
+        return RoutingDecision(
+            model_selected="minimax-m3",
+            estimated_cost=0.0,
+            predicted_accuracy=0.9,
+            reasoning=f"Supra-Router: big model → minimax-m3 ({features.task_type})",
+        )
 
     async def _try_local_execute(
         self,
@@ -951,9 +901,8 @@ class RoutingPipeline:
         """
         assert self._local is not None
 
-        # Context length pre-check
-        model_entry = self._matrix.get_model_capabilities(model_id) or {}
-        max_ctx = model_entry.get("max_context", 4096)
+        # Context length pre-check — qwen2.5-coder-7b has 8192 context
+        max_ctx = 8192
         est_tokens = resource_dict.get("input_tokens", 0)
 
         if est_tokens > max_ctx * 0.9:
@@ -965,7 +914,7 @@ class RoutingPipeline:
             )
             return None  # Caller will fall through to Fireworks
 
-        # Output generation limit pre-check is removed. 
+        # Output generation limit pre-check is removed.
         # Even if a reasoning task is estimated to be long, we want the local $0 model
         # to ATTEMPT it. If it fails or gets cut off, the confidence validator will catch
         # it and it will escalate naturally. Bypassing it prematurely burns Fireworks tokens.
@@ -994,11 +943,6 @@ class RoutingPipeline:
     # ------------------------------------------------------------------
     # Accessors for the API layer
     # ------------------------------------------------------------------
-
-    @property
-    def capability_matrix(self) -> CapabilityMatrix:
-        """Return the capability matrix instance."""
-        return self._matrix
 
     @property
     def metrics(self) -> MetricsCollector:

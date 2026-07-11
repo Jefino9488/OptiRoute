@@ -30,17 +30,30 @@ _TEMP_MAP: dict[str, float] = {
     "general_qa": 0.4,
 }
 
-# ponytail: hard safety cap for direct fireworks.execute calls (pipeline usually passes a smaller value).
-# runaway outputs = the dominant cost lever, not model choice.
+# ponytail: safety cap only. pipeline passes a per-task cap already; this is the ceiling
+# if a caller forgets. tightened after minimax verbosity caused 5k+ token outputs.
 _TASK_MAX_TOKENS: dict[str, int] = {
     "code": 1200,
-    "math": 1400,
-    "reasoning": 1000,
-    "creative": 1000,
+    "math": 1200,
+    "reasoning": 1200,
+    "creative": 1500,
     "general_qa": 600,
-    "extraction": 250,
-    "translation": 500,
-    "retrieval": 200,
+    "extraction": 400,
+    "translation": 800,
+    "retrieval": 400,
+}
+
+# ponytail: stop sequences prevent verbose model rambling. code stops after
+# closing fence; math stops after boxed answer; general stops after answer.
+_STOP_SEQUENCES: dict[str, list[str]] = {
+    "code": ["```", "\n\n\n"],
+    "math": ["\\boxed{", "\n\n---", "Therefore,", "The final answer"],
+    "reasoning": ["\n\n---"],
+    "general_qa": ["\n\n---", "\n\n## "],
+    "extraction": [],
+    "translation": [],
+    "retrieval": [],
+    "creative": [],
 }
 
 
@@ -53,9 +66,12 @@ class FireworksExecutor:
 
     def __init__(self) -> None:
         settings = get_settings()
+        import httpx
         self._client = AsyncOpenAI(
             api_key=settings.fireworks_api_key,
             base_url=settings.fireworks_base_url,
+            timeout=httpx.Timeout(connect=5.0, read=90.0, write=5.0, pool=10.0),
+            max_retries=0,  # we handle retries ourselves
         )
         self._models = settings.allowed_models
 
@@ -68,6 +84,7 @@ class FireworksExecutor:
         max_tokens: int | None = None,
         temperature: float | None = None,
         reasoning_effort: str | None = None,
+        stop_sequences: list[str] | None = None,
     ) -> ExecutionResult:
         """Send a prompt to Fireworks and return the result.
 
@@ -117,7 +134,7 @@ class FireworksExecutor:
 
         start = time.perf_counter()
         
-        max_retries = 5
+        max_retries = 2
         base_delay = 2.0
         
         for attempt in range(max_retries):
@@ -131,6 +148,12 @@ class FireworksExecutor:
                     # Fireworks discounts cached tokens ~50%. Batch of same-type tasks → big input savings.
                     "extra_headers": {"x-session-affinity": f"optiroute-{task_type}"},
                 }
+                # ponytail: stop sequences cut verbose rambling. Fireworks returns
+                # finish_reason="stop" instead of "length" so no escalation trigger.
+                if stop_sequences:
+                    kwargs["stop"] = stop_sequences
+                elif task_type in _STOP_SEQUENCES and _STOP_SEQUENCES[task_type]:
+                    kwargs["stop"] = _STOP_SEQUENCES[task_type]
                 if reasoning_effort is not None:
                     kwargs["reasoning_effort"] = reasoning_effort
                 response = await self._client.chat.completions.create(**kwargs)
@@ -188,6 +211,16 @@ class FireworksExecutor:
         cost = 0.0
 
         text = response.choices[0].message.content or "" if response.choices else ""
+
+        # Ponytail: some models (kimi) return thinking in a separate field.
+        # If main content is empty, check reasoning_content / thinking fields.
+        if not text.strip() and response.choices:
+            msg = response.choices[0].message
+            for attr in ("reasoning_content", "thinking", "reasoning"):
+                thinking = getattr(msg, attr, None) or getattr(msg, "extra", {}).get(attr, "")
+                if thinking:
+                    text = thinking
+                    break
 
         logger.info(
             "fireworks.completed",

@@ -1,12 +1,10 @@
-"""Local LLM executor — Phi-4-mini-instruct via llama-server HTTP API.
+"""Local LLM executor — Qwen2.5-Coder-7B-Instruct via llama-server HTTP API.
 
 Design:
 - llama-server runs as a background process in the container (started by entrypoint.sh)
 - load() pings the health endpoint synchronously to check if server is up
 - execute() calls /v1/chat/completions via httpx (async, non-blocking)
-- route() is disabled (returns None) — heuristic engine handles routing instead
 - thinking:false disables chain-of-thought tokens
-- cache_prompt:true reuses KV cache for repeated system prompts
 - Cost is always $0 — no Fireworks tokens consumed
 """
 
@@ -39,14 +37,14 @@ _TEMP_MAP: dict[str, float] = {
 }
 
 _MAX_TOKENS_MAP: dict[str, int] = {
-    "code": 4096,
-    "math": 3072,
-    "extraction": 2048,
-    "translation": 2048,
-    "reasoning": 4096,
-    "retrieval": 1024,
-    "creative": 4096,
-    "general_qa": 2048,
+    "code": 1500,
+    "math": 1000,
+    "extraction": 300,
+    "translation": 500,
+    "reasoning": 1200,
+    "retrieval": 200,
+    "creative": 1500,
+    "general_qa": 600,
 }
 
 
@@ -66,14 +64,15 @@ class LocalExecutor:
     def __init__(
         self,
         model_path: str,
-        context_length: int = 8192,
+        context_length: int = 16384,
         n_threads: int = 2,
     ) -> None:
         settings = get_settings()
-        self._server_url = settings.local_server_url  # e.g. http://localhost:8080/v1
+        self._server_url = settings.local_server_url
         self._model_path = model_path
+        self._model_name = settings.local_model_name
         self._available: bool = False
-        self._client = httpx.AsyncClient(timeout=120.0)
+        self._client = httpx.AsyncClient(timeout=300.0)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -157,7 +156,7 @@ class LocalExecutor:
         if not self.is_available:
             return ExecutionResult(
                 response="[LOCAL_UNAVAILABLE] llama-server is not running.",
-                model_used="local:phi-4-mini",
+                model_used=self._model_name,
                 confidence=0.0,
             )
 
@@ -190,20 +189,46 @@ class LocalExecutor:
                     "messages": messages,
                     "temperature": temp,
                     "max_tokens": max_tok,
-                    "thinking": False,      # disable MiniCPM5 chain-of-thought
-                    "cache_prompt": True,   # reuse KV cache for system prompt
+                    "thinking": False,      # disable chain-of-thought
+                    "cache_prompt": False,  # no KV cache accumulation between requests
                 },
                 headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
             data = response.json()
-        except Exception as exc:
-            logger.error("local_executor.api_failed", error=str(exc))
+        except httpx.TimeoutException:
+            logger.error("local_executor.timeout", timeout_s=300)
             return ExecutionResult(
-                response=f"[LOCAL_ERROR] llama-server API call failed: {exc}",
-                model_used="local:phi-4-mini",
+                response="[LOCAL_ERROR] llama-server timed out",
+                model_used=self._model_name,
                 confidence=0.0,
             )
+        except Exception as exc:
+            # Connection error (server crashed) — wait and retry once
+            logger.warning("local_executor.connection_error_retrying", error=str(exc))
+            import asyncio
+            await asyncio.sleep(3)
+            try:
+                response = await self._client.post(
+                    f"{self._server_url}/chat/completions",
+                    json={
+                        "messages": messages,
+                        "temperature": temp,
+                        "max_tokens": max_tok,
+                        "thinking": False,
+                        "cache_prompt": False,
+                    },
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                data = response.json()
+            except Exception as exc2:
+                logger.error("local_executor.api_failed", error=str(exc2))
+                return ExecutionResult(
+                    response=f"[LOCAL_ERROR] llama-server API call failed: {exc2}",
+                    model_used=self._model_name,
+                    confidence=0.0,
+                )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -224,7 +249,7 @@ class LocalExecutor:
 
         return ExecutionResult(
             response=text,
-            model_used="local:phi-4-mini",
+            model_used=self._model_name,
             tokens_input=tokens_in,
             tokens_output=tokens_out,
             cost=0.0,

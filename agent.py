@@ -21,7 +21,7 @@ Environment variables injected by harness (do NOT hardcode):
 Routing strategy:
     1. Deterministic tool ($0, instant)     — pure math / JSON
     2. Local LLM router ($0 tokens) →
-        a. local model (Phi-4-mini GGUF)    — factual, sentiment, NER, summarisation
+        a. local model (qwen2.5-coder-7b GGUF)    — factual, sentiment, NER, summarisation
        b. kimi-k2p7-code                    — code debugging / generation
        c. minimax-m3                        — complex math, logical reasoning
     3. Heuristic engine (fallback)          — if local model unavailable
@@ -44,6 +44,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+try:
+    import uvloop
+    uvloop.install()
+except ImportError:
+    pass  # fallback to default asyncio loop
+
 
 # ---------------------------------------------------------------------------
 # Path configuration — can be overridden via env vars for local testing
@@ -53,7 +59,7 @@ INPUT_PATH = Path(os.environ.get("INPUT_PATH", "/input/tasks.json"))
 OUTPUT_PATH = Path(os.environ.get("OUTPUT_PATH", "/output/results.json"))
 
 # Batch size for concurrent processing (configurable via env var)
-BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "5"))
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "15"))
 
 
 # ---------------------------------------------------------------------------
@@ -115,8 +121,8 @@ async def _process_task(
             task_ms = (time.perf_counter() - t_task) * 1000
 
         print(
-            f"[agent]   → model={model_used}, cost=${task_cost:.6f}, "
-            f"tokens={tokens_in}→{tokens_out}, latency={task_ms:.0f}ms",
+            f"[agent]   -> model={model_used}, cost=${task_cost:.6f}, "
+            f"tokens={tokens_in}->{tokens_out}, latency={task_ms:.0f}ms",
             flush=True,
         )
 
@@ -231,15 +237,15 @@ async def main() -> None:
     total_s = time.perf_counter() - t_start
     cache_stats = pipeline.cache.stats
     print(
-        f"\n[agent] ✓ Complete: {len(results)} tasks in {total_s:.1f}s\n"
+        f"\n[agent] OK Complete: {len(results)} tasks in {total_s:.1f}s\n"
         f"[agent]   Batch size:      {BATCH_SIZE}\n"
-        f"[agent]   Tasks local:     {local_count} (Phi-4-mini, $0)\n"
+        f"[agent]   Tasks local:     {local_count} (qwen2.5-coder-7b, $0)\n"
         f"[agent]   Tasks fireworks:  {fireworks_count} (minimax-m3)\n"
         f"[agent]   Tasks deterministic: {deterministic_count}\n"
-        f"[agent]   ─────────────────────────────────\n"
-        f"[agent]   Local tokens:    {local_tokens_in:,} in → {local_tokens_out:,} out\n"
-        f"[agent]   Fireworks tokens: {fireworks_tokens_in:,} in → {fireworks_tokens_out:,} out\n"
-        f"[agent]   Total tokens:    {total_tokens_in:,} in → {total_tokens_out:,} out\n"
+        f"[agent]   -----------------------------------\n"
+        f"[agent]   Local tokens:    {local_tokens_in:,} in -> {local_tokens_out:,} out\n"
+        f"[agent]   Fireworks tokens: {fireworks_tokens_in:,} in -> {fireworks_tokens_out:,} out\n"
+        f"[agent]   Total tokens:    {total_tokens_in:,} in -> {total_tokens_out:,} out\n"
         f"[agent]   Total cost:      ${total_cost:.6f}\n"
         f"[agent]   Cache hits:      {cache_stats['hits']}/{cache_stats['hits'] + cache_stats['misses']} "
         f"({cache_stats['hit_rate']:.1%})\n"

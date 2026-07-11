@@ -119,6 +119,22 @@ class SupraRouter:
 
         return self._parse_output(raw_output)
 
+    async def classify_batch(self, prompts: list[str]) -> list[SupraRouterResult]:
+        """Classify multiple prompts in parallel.
+
+        Parameters
+        ----------
+        prompts : list[str]
+            List of prompts to classify.
+
+        Returns
+        -------
+        list[SupraRouterResult]
+            Results in the same order as input prompts.
+        """
+        import asyncio
+        return await asyncio.gather(*[self.classify(p) for p in prompts])
+
     # ------------------------------------------------------------------
     # Output parsing
     # ------------------------------------------------------------------
