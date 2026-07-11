@@ -1,29 +1,23 @@
-"""Local LLM executor — Qwen2.5-Coder-7B-Instruct via llama-server HTTP API.
+"""Local LLM executor — dynamically loads Llama instances using llama-cpp-python.
 
 Design:
-- llama-server runs as a background process in the container (started by entrypoint.sh)
-- load() pings the health endpoint synchronously to check if server is up
-- execute() calls /v1/chat/completions via httpx (async, non-blocking)
-- thinking:false disables chain-of-thought tokens
-- Cost is always $0 — no Fireworks tokens consumed
+- Only ONE model is loaded in memory at a time to stay under 4GB RAM.
+- Caches the current model instance. If a new model is requested, unloads the old one.
+- Cost is always $0 — no Fireworks tokens consumed.
 """
 
 from __future__ import annotations
 
+import gc
 import time
+from typing import Any
 
-import httpx
-import requests
 import structlog
 
 from app.config import get_settings
 from app.executors.base import ExecutionResult
 
 logger = structlog.get_logger(__name__)
-
-# ---------------------------------------------------------------------------
-# Per-task temperature and token budgets (mirrors fireworks.py)
-# ---------------------------------------------------------------------------
 
 _TEMP_MAP: dict[str, float] = {
     "code": 0.1,
@@ -49,114 +43,88 @@ _MAX_TOKENS_MAP: dict[str, int] = {
 
 
 class LocalExecutor:
-    """Execute prompts via llama-server HTTP API running inside the container.
+    """Execute prompts via llama-cpp-python directly in memory.
 
     Parameters
     ----------
-    model_path : str
-        Path to the GGUF file (used for logging only — server manages the model).
     context_length : int
         Maximum context window in tokens.
     n_threads : int
-        CPU thread count (informational only — configured at server startup).
+        CPU thread count.
     """
 
     def __init__(
         self,
-        model_path: str,
-        context_length: int = 16384,
+        context_length: int = 8192,
         n_threads: int = 2,
     ) -> None:
-        settings = get_settings()
-        self._server_url = settings.local_server_url
-        self._model_path = model_path
-        self._model_name = settings.local_model_name
-        self._available: bool = False
-        self._client = httpx.AsyncClient(timeout=300.0)
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
+        self._context_length = context_length
+        self._n_threads = n_threads
+        self._current_model_id: str | None = None
+        self._llm: Any | None = None
+        
     def load(self) -> bool:
-        """Ping llama-server health endpoint to confirm it is running.
-
-        Uses requests (sync) so it can be called from synchronous startup code.
-        Returns True only when the server responds OK — False marks the local
-        model as unavailable so the pipeline falls through to Fireworks.
-        """
-        import requests  # noqa: PLC0415
-
-        logger.info("local_executor.checking_server", url=self._server_url)
-        base_url = self._server_url.rstrip("/v1").rstrip("/")
-        try:
-            resp = requests.get(f"{base_url}/health", timeout=5.0)
-            data = (
-                resp.json()
-                if "application/json" in resp.headers.get("content-type", "")
-                else {}
-            )
-            if resp.status_code == 200 or data.get("status") in ("ok", "loading"):
-                self._available = True
-                logger.info("local_executor.server_ready")
-                return True
-            logger.warning("local_executor.server_unhealthy", status=resp.status_code)
-        except Exception as exc:
-            logger.warning("local_executor.server_not_reachable", error=str(exc))
-
-        self._available = False
-        return False
-
+        # Compatibility stub, we lazy load models on execute
+        return True
+        
     @property
     def is_available(self) -> bool:
-        """True if llama-server is reachable."""
-        return self._available
+        return True
 
-    # ------------------------------------------------------------------
-    # Routing — disabled, heuristic engine handles routing
-    # ------------------------------------------------------------------
-
-    async def route(self, prompt: str) -> str | None:  # noqa: ARG002
-        """Routing via local model is disabled — always returns None.
-
-        The heuristic decision engine (capability matrix) handles all routing.
-        This method is kept for interface compatibility with pipeline.py.
-        """
-        return None
-
-    # ------------------------------------------------------------------
-    # Execution
-    # ------------------------------------------------------------------
+    def _ensure_model_loaded(self, model_id: str) -> bool:
+        """Ensure the requested model is loaded, unloading the old one if needed."""
+        if self._current_model_id == model_id and self._llm is not None:
+            return True
+            
+        settings = get_settings()
+        models = settings.allowed_models
+        if model_id not in models:
+            logger.error("local_executor.unknown_model", model_id=model_id)
+            return False
+            
+        model_path = models[model_id]
+        
+        # Unload old model
+        if self._llm is not None:
+            logger.info("local_executor.unloading_model", model_id=self._current_model_id)
+            del self._llm
+            self._llm = None
+            self._current_model_id = None
+            gc.collect()
+            
+        # Load new model
+        logger.info("local_executor.loading_model", model_id=model_id, path=model_path)
+        try:
+            from llama_cpp import Llama  # noqa: PLC0415
+            
+            # Using n_ctx=self._context_length to cap memory usage. 
+            # n_ctx=0 uses native context (e.g., 256k for Phi-4), which causes OOM (26GB+ KV cache).
+            self._llm = Llama(
+                model_path=model_path,
+                n_ctx=self._context_length,
+                n_threads=self._n_threads,
+                verbose=False,
+            )
+            self._current_model_id = model_id
+            logger.info("local_executor.model_loaded_successfully", model_id=model_id)
+            return True
+        except Exception as exc:
+            logger.error("local_executor.load_failed", error=str(exc))
+            return False
 
     async def execute(
         self,
         prompt: str,
+        model_id: str,
         task_type: str = "general_qa",
         system_prompt: str | None = None,
         max_tokens: int | None = None,
     ) -> ExecutionResult:
-        """Run inference via llama-server /v1/chat/completions endpoint.
-
-        Parameters
-        ----------
-        prompt : str
-            The user prompt.
-        task_type : str
-            Task category — drives temperature and max_tokens defaults.
-        system_prompt : str | None
-            Optional system message override.
-        max_tokens : int | None
-            Override for max output tokens.
-
-        Returns
-        -------
-        ExecutionResult
-            cost is always 0.0 — no Fireworks tokens consumed.
-        """
-        if not self.is_available:
+        """Run inference using the specified local model."""
+        if not self._ensure_model_loaded(model_id):
             return ExecutionResult(
-                response="[LOCAL_UNAVAILABLE] llama-server is not running.",
-                model_used=self._model_name,
+                response=f"[LOCAL_ERROR] Failed to load local model {model_id}",
+                model_used=model_id,
                 confidence=0.0,
             )
 
@@ -167,81 +135,46 @@ class LocalExecutor:
             "You are a helpful assistant. Be concise and accurate. "
             "Give direct answers without unnecessary preamble."
         )
-
+        
         messages = [
             {"role": "system", "content": sys_msg},
             {"role": "user", "content": prompt},
         ]
 
         logger.info(
-            "local_executor.execute_api",
+            "local_executor.execute_inference",
+            model_id=model_id,
             task_type=task_type,
             temperature=temp,
             max_tokens=max_tok,
-            url=self._server_url,
         )
 
         start = time.perf_counter()
         try:
-            response = await self._client.post(
-                f"{self._server_url}/chat/completions",
-                json={
-                    "messages": messages,
-                    "temperature": temp,
-                    "max_tokens": max_tok,
-                    "thinking": False,      # disable chain-of-thought
-                    "cache_prompt": False,  # no KV cache accumulation between requests
-                },
-                headers={"Content-Type": "application/json"},
-            )
-            response.raise_for_status()
-            data = response.json()
-        except httpx.TimeoutException:
-            logger.error("local_executor.timeout", timeout_s=300)
-            return ExecutionResult(
-                response="[LOCAL_ERROR] llama-server timed out",
-                model_used=self._model_name,
-                confidence=0.0,
+            response = self._llm.create_chat_completion(
+                messages=messages,
+                max_tokens=max_tok,
+                temperature=temp,
             )
         except Exception as exc:
-            # Connection error (server crashed) — wait and retry once
-            logger.warning("local_executor.connection_error_retrying", error=str(exc))
-            import asyncio
-            await asyncio.sleep(3)
-            try:
-                response = await self._client.post(
-                    f"{self._server_url}/chat/completions",
-                    json={
-                        "messages": messages,
-                        "temperature": temp,
-                        "max_tokens": max_tok,
-                        "thinking": False,
-                        "cache_prompt": False,
-                    },
-                    headers={"Content-Type": "application/json"},
-                )
-                response.raise_for_status()
-                data = response.json()
-            except Exception as exc2:
-                logger.error("local_executor.api_failed", error=str(exc2))
-                return ExecutionResult(
-                    response=f"[LOCAL_ERROR] llama-server API call failed: {exc2}",
-                    model_used=self._model_name,
-                    confidence=0.0,
-                )
+            logger.error("local_executor.inference_failed", error=str(exc))
+            return ExecutionResult(
+                response=f"[LOCAL_ERROR] Inference failed: {exc}",
+                model_used=model_id,
+                confidence=0.0,
+            )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
-        choices = data.get("choices", [])
-        text: str = (
-            choices[0].get("message", {}).get("content", "") if choices else ""
-        )
-        usage: dict = data.get("usage", {})
+        choices = response.get("choices", [])
+        text: str = choices[0].get("message", {}).get("content", "") if choices else ""
+        
+        usage: dict = response.get("usage", {})
         tokens_in = usage.get("prompt_tokens", 0)
         tokens_out = usage.get("completion_tokens", 0)
 
         logger.info(
-            "local_executor.api_completed",
+            "local_executor.inference_completed",
             latency_ms=round(elapsed_ms, 1),
             tokens_in=tokens_in,
             tokens_out=tokens_out,
@@ -249,7 +182,7 @@ class LocalExecutor:
 
         return ExecutionResult(
             response=text,
-            model_used=self._model_name,
+            model_used=model_id,
             tokens_input=tokens_in,
             tokens_output=tokens_out,
             cost=0.0,

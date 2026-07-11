@@ -83,13 +83,13 @@ class Settings(BaseSettings):
         default=True,
         description="Enable local model inference for $0 Fireworks token cost",
     )
-    local_model_path: str = Field(
-        default="models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
-        description="Path to GGUF model weights file served by llama-server",
+    local_ministral_path: str = Field(
+        default="models/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
+        description="Path to GGUF model for Ministral-3B",
     )
-    local_model_name: str = Field(
-        default="local:qwen2.5-coder-7b",
-        description="Local model identifier",
+    local_phi_path: str = Field(
+        default="models/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
+        description="Path to GGUF model for Phi-4-Mini",
     )
     local_model_context_length: int = Field(
         default=8192,
@@ -99,15 +99,7 @@ class Settings(BaseSettings):
     local_model_threads: int = Field(
         default=2,
         ge=1,
-        description="CPU threads for llama-server (match harness vCPU count)",
-    )
-    local_router_enabled: bool = Field(
-        default=False,
-        description="Use local LLM for routing decisions — disabled, heuristic engine used instead",
-    )
-    local_server_url: str = Field(
-        default="http://localhost:8080/v1",
-        description="Base URL of the llama-server HTTP API (OpenAI-compatible)",
+        description="CPU threads for local models",
     )
 
     # --- Supra-Router-51M (ML-based routing) ---
@@ -152,9 +144,10 @@ class Settings(BaseSettings):
             if not result:
                 result = dict(self._local_dev_models)
                 
-        # Always inject the local model if enabled
+        # Always inject the local models if enabled
         if self.local_model_enabled:
-            result[self.local_model_name] = self.local_model_path
+            result["local:ministral-3b"] = self.local_ministral_path
+            result["local:phi-4-mini"] = self.local_phi_path
             
         return result
 
