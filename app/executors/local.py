@@ -1,11 +1,11 @@
-"""Local LLM executor — MiniCPM5-1B-Q4_K_M via llama-server HTTP API.
+"""Local LLM executor — Phi-4-mini-instruct via llama-server HTTP API.
 
 Design:
 - llama-server runs as a background process in the container (started by entrypoint.sh)
 - load() pings the health endpoint synchronously to check if server is up
 - execute() calls /v1/chat/completions via httpx (async, non-blocking)
 - route() is disabled (returns None) — heuristic engine handles routing instead
-- thinking:false disables MiniCPM5 chain-of-thought tokens
+- thinking:false disables chain-of-thought tokens
 - cache_prompt:true reuses KV cache for repeated system prompts
 - Cost is always $0 — no Fireworks tokens consumed
 """
@@ -40,7 +40,7 @@ _TEMP_MAP: dict[str, float] = {
 
 _MAX_TOKENS_MAP: dict[str, int] = {
     "code": 4096,
-    "math": 2048,
+    "math": 3072,
     "extraction": 2048,
     "translation": 2048,
     "reasoning": 4096,
@@ -157,7 +157,7 @@ class LocalExecutor:
         if not self.is_available:
             return ExecutionResult(
                 response="[LOCAL_UNAVAILABLE] llama-server is not running.",
-                model_used="local:qwen-2.5-3b",
+                model_used="local:phi-4-mini",
                 confidence=0.0,
             )
 
@@ -201,7 +201,7 @@ class LocalExecutor:
             logger.error("local_executor.api_failed", error=str(exc))
             return ExecutionResult(
                 response=f"[LOCAL_ERROR] llama-server API call failed: {exc}",
-                model_used="local:qwen-2.5-3b",
+                model_used="local:phi-4-mini",
                 confidence=0.0,
             )
 
@@ -224,7 +224,7 @@ class LocalExecutor:
 
         return ExecutionResult(
             response=text,
-            model_used="local:qwen-2.5-3b",
+            model_used="local:phi-4-mini",
             tokens_input=tokens_in,
             tokens_output=tokens_out,
             cost=0.0,

@@ -1,6 +1,6 @@
 {
   "routing_distribution": {
-    "local:qwen-2.5-3b": "57.1%",
+    "local:phi-4-mini": "57.1%",
     "minimax-m3": "42.0%",
     "kimi-k2p7-code": "0.9%"
   },

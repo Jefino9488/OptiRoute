@@ -84,11 +84,11 @@ class Settings(BaseSettings):
         description="Enable local model inference for $0 Fireworks token cost",
     )
     local_model_path: str = Field(
-        default="models/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+        default="models/Phi-4-mini-instruct-Q4_K_M.gguf",
         description="Path to GGUF model weights file served by llama-server",
     )
     local_model_name: str = Field(
-        default="local:qwen-2.5-3b",
+        default="local:phi-4-mini",
         description="Local model identifier in the capability matrix",
     )
     local_model_context_length: int = Field(

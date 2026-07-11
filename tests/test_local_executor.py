@@ -115,7 +115,7 @@ async def test_execute_returns_response_text():
     result = await exc.execute("What is the capital of France?", "retrieval")
     assert result.response == "Paris is the capital of France."
     assert result.cost == 0.0
-    assert result.model_used == "local:qwen-2.5-3b"
+    assert result.model_used == "local:phi-4-mini"
     assert result.tokens_input == 20
     assert result.tokens_output == 8
     assert result.confidence == 1.0

@@ -394,10 +394,10 @@ class RoutingPipeline:
             # Adaptive output budget based on task characteristics
             # Task-type minimums: reasoning/code/math/general_qa need more tokens
             _TASK_MIN_TOKENS = {
-                "math": 1536,
+                "math": 2048,
                 "code": 2048,
                 "reasoning": 2048,
-                "general_qa": 1536,
+                "general_qa": 2048,
                 "creative": 1024,
                 "extraction": 512,
                 "verification": 512,
@@ -872,7 +872,7 @@ class RoutingPipeline:
         """Select the model using a 3-level priority chain.
 
         1. force_model override (testing / debugging)
-        2. Local LLM router (Qwen2.5-3B, max_tokens=15)
+        2. Local LLM router (Phi-4-mini, max_tokens=15)
         3. Heuristic decision engine (fallback — always works)
 
         If supra_route is "big model", required_accuracy is bumped to

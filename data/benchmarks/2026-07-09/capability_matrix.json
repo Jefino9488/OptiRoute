@@ -41,7 +41,7 @@
     ],
     "avg_latency_ms": 4908.5
   },
-  "local:qwen-2.5-3b": {
+  "local:phi-4-mini": {
     "capabilities": {
       "math": 0.75,
       "reasoning": 0.7001,

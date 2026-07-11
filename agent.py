@@ -21,7 +21,7 @@ Environment variables injected by harness (do NOT hardcode):
 Routing strategy:
     1. Deterministic tool ($0, instant)     — pure math / JSON
     2. Local LLM router ($0 tokens) →
-        a. local model (Qwen2.5-3B GGUF)    — factual, sentiment, NER, summarisation
+        a. local model (Phi-4-mini GGUF)    — factual, sentiment, NER, summarisation
        b. kimi-k2p7-code                    — code debugging / generation
        c. minimax-m3                        — complex math, logical reasoning
     3. Heuristic engine (fallback)          — if local model unavailable
@@ -233,7 +233,7 @@ async def main() -> None:
     print(
         f"\n[agent] ✓ Complete: {len(results)} tasks in {total_s:.1f}s\n"
         f"[agent]   Batch size:      {BATCH_SIZE}\n"
-        f"[agent]   Tasks local:     {local_count} (Qwen2.5-3B, $0)\n"
+        f"[agent]   Tasks local:     {local_count} (Phi-4-mini, $0)\n"
         f"[agent]   Tasks fireworks:  {fireworks_count} (minimax-m3)\n"
         f"[agent]   Tasks deterministic: {deterministic_count}\n"
         f"[agent]   ─────────────────────────────────\n"

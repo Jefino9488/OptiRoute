@@ -46,12 +46,12 @@ RUN mkdir -p /models
 
 # Mount local models/ dir at build time; download from HF Hub if not present.
 RUN --mount=type=bind,source=models,target=/local_models \
-    if [ -f /local_models/Qwen2.5-3B-Instruct-Q4_K_M.gguf ]; then \
+    if [ -f /local_models/Phi-4-mini-instruct-Q4_K_M.gguf ]; then \
         echo "Found local model, copying..."; \
-        cp /local_models/Qwen2.5-3B-Instruct-Q4_K_M.gguf /models/Qwen2.5-3B-Instruct-Q4_K_M.gguf; \
+        cp /local_models/Phi-4-mini-instruct-Q4_K_M.gguf /models/Phi-4-mini-instruct-Q4_K_M.gguf; \
     else \
         echo "Local model not found, downloading from HF Hub..."; \
-        python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='bartowski/Qwen2.5-3B-Instruct-GGUF', filename='Qwen2.5-3B-Instruct-Q4_K_M.gguf', local_dir='/models', local_dir_use_symlinks=False)"; \
+        python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='unsloth/Phi-4-mini-instruct-GGUF', filename='Phi-4-mini-instruct-Q4_K_M.gguf', local_dir='/models', local_dir_use_symlinks=False)"; \
     fi
 
 # Download Supra-Router-51M GGUF (~37MB, for ML-based prompt routing)
@@ -97,8 +97,8 @@ COPY main.py agent.py ./
 
 # ── Local model env vars ───────────────────────────────────────────────────────
 ENV LOCAL_MODEL_ENABLED=true
-ENV LOCAL_MODEL_PATH=models/Qwen2.5-3B-Instruct-Q4_K_M.gguf
-ENV LOCAL_MODEL_NAME=local:qwen-2.5-3b
+ENV LOCAL_MODEL_PATH=models/Phi-4-mini-instruct-Q4_K_M.gguf
+ENV LOCAL_MODEL_NAME=local:qwen3.5-4b-coder
 ENV LOCAL_MODEL_CONTEXT_LENGTH=8192
 ENV LOCAL_MODEL_THREADS=2
 ENV LOCAL_ROUTER_ENABLED=false
@@ -122,9 +122,9 @@ llama-server \\\n\
   > /app/supra_router_server.log 2>&1 &\n\
 SUPRA_PID=$!\n\
 \n\
-echo "[startup] Launching main Qwen llama-server (port 8080)..."\n\
+echo "[startup] Launching main Phi-4-mini llama-server (port 8080)..."\n\
 llama-server \\\n\
-  -m models/Qwen2.5-3B-Instruct-Q4_K_M.gguf \\\n\
+  -m models/Phi-4-mini-instruct-Q4_K_M.gguf \\\n\
   --port 8080 --host 0.0.0.0 \\\n\
   --threads 2 -c 8192 \\\n\
   -b 512 --ubatch-size 512 \\\n\
