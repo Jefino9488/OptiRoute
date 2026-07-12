@@ -49,11 +49,11 @@ RUN --mount=type=bind,source=models,target=/local_models \
     cp /local_models/*.gguf /models/ 2>/dev/null || true && \
     if [ ! -f /models/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf ]; then \
         echo "Downloading Ministral-3B..."; \
-        wget -q -O /models/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf https://huggingface.co/bartowski/mistralai_Ministral-3-3B-Instruct-2512-GGUF/resolve/main/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf; \
+        python -c "import urllib.request; urllib.request.urlretrieve('https://huggingface.co/bartowski/mistralai_Ministral-3-3B-Instruct-2512-GGUF/resolve/main/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf', '/models/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf')"; \
     fi && \
     if [ ! -f /models/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf ]; then \
         echo "Downloading Phi-4-mini..."; \
-        wget -q -O /models/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf; \
+        python -c "import urllib.request; urllib.request.urlretrieve('https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf', '/models/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf')"; \
     fi
 
 # Download Supra-Router-51M GGUF (~37MB, for ML-based prompt routing)
