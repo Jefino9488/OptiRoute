@@ -137,6 +137,8 @@ class RoutingDecision(BaseModel):
 class RouteResponse(BaseModel):
     """Full response returned to the client after routing + execution."""
 
+    model_config = {"extra": "ignore"}
+
     response: str = Field(
         ...,
         description="The model-generated response text",

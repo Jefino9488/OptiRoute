@@ -1,8 +1,4 @@
-"""Fireworks AI executor — OpenAI-compatible API via the openai SDK.
-
-All scored inference goes through this executor.  Uses async httpx under
-the hood via ``openai.AsyncOpenAI``.
-"""
+"""Fireworks AI executor — simplified for single-model pipeline."""
 
 from __future__ import annotations
 
@@ -18,49 +14,9 @@ from app.executors.base import ExecutionResult
 
 logger = structlog.get_logger(__name__)
 
-# Per-task-type temperature presets.
-_TEMP_MAP: dict[str, float] = {
-    "code": 0.1,
-    "math": 0.0,
-    "extraction": 0.0,
-    "translation": 0.3,
-    "reasoning": 0.3,
-    "retrieval": 0.0,
-    "creative": 0.7,
-    "general_qa": 0.4,
-}
-
-# Safety cap — pipeline passes per-task cap; this is the ceiling.
-_TASK_MAX_TOKENS: dict[str, int] = {
-    "code": 1500,
-    "math": 800,
-    "reasoning": 800,
-    "creative": 1200,
-    "general_qa": 400,
-    "extraction": 300,
-    "translation": 600,
-    "retrieval": 200,
-}
-
-# Stop sequences prevent verbose rambling.
-_STOP_SEQUENCES: dict[str, list[str]] = {
-    "code": ["```", "\n\n\n"],
-    "math": ["\\boxed{", "\n\n---", "Therefore,", "The final answer"],
-    "reasoning": ["\n\n---"],
-    "general_qa": ["\n\n---", "\n\n## "],
-    "extraction": [],
-    "translation": [],
-    "retrieval": [],
-    "creative": [],
-}
-
-
 
 class FireworksExecutor:
-    """Execute prompts via the Fireworks AI inference API.
-
-    The executor is configured once and reused for all requests.
-    """
+    """Execute prompts via the Fireworks AI inference API."""
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -69,177 +25,94 @@ class FireworksExecutor:
             api_key=settings.fireworks_api_key,
             base_url=settings.fireworks_base_url,
             timeout=httpx.Timeout(connect=5.0, read=90.0, write=5.0, pool=10.0),
-            max_retries=0,  # we handle retries ourselves
+            max_retries=0,
         )
-        self._models = settings.allowed_models
+        self._model_id = settings.get_model_path("minimax-m3")
 
     async def execute(
         self,
         prompt: str,
-        model_id: str,
-        task_type: str = "general_qa",
         system_prompt: str | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        reasoning_effort: str | None = None,
-        stop_sequences: list[str] | None = None,
+        max_tokens: int = 2000,
+        temperature: float = 0.1,
+        response_format: dict | None = None,
     ) -> ExecutionResult:
-        """Send a prompt to Fireworks and return the result.
-
-        Parameters
-        ----------
-        prompt : str
-            The user prompt.
-        model_id : str
-            Short model name (e.g. ``"gemma-4-26b-a4b-it"``).
-        task_type : str
-            Dominant task type — drives temperature and max_tokens defaults.
-        system_prompt : str | None
-            Optional system message.
-        max_tokens : int | None
-            Override for max output tokens.
-        temperature : float | None
-            Override for sampling temperature.
-        reasoning_effort : str | None
-            Fireworks reasoning_effort parameter.  Supported values:
-            ``"none"`` (thinking off), ``"low"``, ``"medium"``, ``"high"``,
-            ``"max"``.  ``None`` omits the parameter (model default).
-
-        Returns
-        -------
-        ExecutionResult
-        """
-        settings = get_settings()
-        full_model = settings.get_model_path(model_id)
-
-        temp = temperature if temperature is not None else _TEMP_MAP.get(task_type, 0.4)
-        default_cap = _TASK_MAX_TOKENS.get(task_type, 400)
-        max_tok = max_tokens if max_tokens is not None else default_cap
-
+        """Send a prompt to minimax-m3 and return the result."""
         messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        kwargs: dict[str, Any] = {
+            "model": self._model_id,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if response_format:
+            kwargs["response_format"] = response_format
+
         logger.info(
             "fireworks.execute",
-            model=model_id,
-            task_type=task_type,
-            temperature=temp,
-            max_tokens=max_tok,
-            reasoning_effort=reasoning_effort,
+            model="minimax-m3",
+            temperature=temperature,
+            max_tokens=max_tokens,
+            has_json_mode=response_format is not None,
         )
 
         start = time.perf_counter()
-        
-        max_retries = 2
-        base_delay = 2.0
-        
-        for attempt in range(max_retries):
+
+        # Retry on rate limit (2 attempts)
+        for attempt in range(2):
             try:
-                kwargs: dict[str, Any] = {
-                    "model": full_model,
-                    "messages": messages,
-                    "temperature": temp,
-                    "max_tokens": max_tok,
-                    # ponytail: pin same-task-type calls to the same replica for prompt-cache hits.
-                    # Fireworks discounts cached tokens ~50%. Batch of same-type tasks → big input savings.
-                    "extra_headers": {"x-session-affinity": f"optiroute-{task_type}"},
-                }
-                # ponytail: stop sequences cut verbose rambling. Fireworks returns
-                # finish_reason="stop" instead of "length" so no escalation trigger.
-                if stop_sequences:
-                    kwargs["stop"] = stop_sequences
-                elif task_type in _STOP_SEQUENCES and _STOP_SEQUENCES[task_type]:
-                    kwargs["stop"] = _STOP_SEQUENCES[task_type]
-                if reasoning_effort is not None:
-                    kwargs["reasoning_effort"] = reasoning_effort
                 response = await self._client.chat.completions.create(**kwargs)
-                break  # Success
+                break
             except RateLimitError as exc:
-                if attempt == max_retries - 1:
-                    logger.error("fireworks.rate_limit_exhausted", model=model_id, error=str(exc))
+                if attempt == 1:
+                    logger.error("fireworks.rate_limit_exhausted", error=str(exc))
                     return ExecutionResult(
-                        response="[ERROR] Rate limit exceeded after retries.",
-                        model_used=model_id,
+                        response="[ERROR] Rate limit exceeded.",
+                        model_used="minimax-m3",
                         confidence=0.0,
                         raw_metadata={"error": str(exc)},
                     )
-                delay = base_delay * (2 ** attempt)
-                logger.warning(
-                    "fireworks.rate_limit_retry", 
-                    model=model_id, 
-                    attempt=attempt + 1, 
-                    delay=delay
-                )
+                delay = 2.0 * (2 ** attempt)
+                logger.warning("fireworks.rate_limit_retry", attempt=attempt + 1, delay=delay)
                 await asyncio.sleep(delay)
-            except NotFoundError as exc:
-                logger.warning("fireworks.not_found", model=model_id, error=str(exc))
+            except (NotFoundError, APITimeoutError, APIError) as exc:
+                logger.error("fireworks.error", error=str(exc))
                 return ExecutionResult(
-                    response="[NOT_FOUND] Model not available (404).",
-                    model_used=model_id,
-                    confidence=0.0,
-                    raw_metadata={"error": str(exc)},
-                )
-            except APITimeoutError as exc:
-                logger.error("fireworks.timeout", model=model_id, error=str(exc))
-                return ExecutionResult(
-                    response="[ERROR] Request timed out.",
-                    model_used=model_id,
-                    confidence=0.0,
-                    raw_metadata={"error": str(exc)},
-                )
-            except APIError as exc:
-                logger.error("fireworks.api_error", model=model_id, error=str(exc))
-                return ExecutionResult(
-                    response=f"[ERROR] API error: {exc}",
-                    model_used=model_id,
+                    response=f"[ERROR] {exc}",
+                    model_used="minimax-m3",
                     confidence=0.0,
                     raw_metadata={"error": str(exc)},
                 )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
-        # Extract usage info.
         usage = response.usage
         tokens_in = usage.prompt_tokens if usage else 0
         tokens_out = usage.completion_tokens if usage else 0
 
-        # Cost calculation is handled by the RoutingPipeline using its in-memory matrix.
-        cost = 0.0
-
         text = response.choices[0].message.content or "" if response.choices else ""
-
-        # Ponytail: some models (kimi) return thinking in a separate field.
-        # If main content is empty, check reasoning_content / thinking fields.
-        if not text.strip() and response.choices:
-            msg = response.choices[0].message
-            for attr in ("reasoning_content", "thinking", "reasoning"):
-                thinking = getattr(msg, attr, None) or getattr(msg, "extra", {}).get(attr, "")
-                if thinking:
-                    text = thinking
-                    break
 
         logger.info(
             "fireworks.completed",
-            model=model_id,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
-            cost=cost,
             latency_ms=round(elapsed_ms, 1),
         )
 
         return ExecutionResult(
             response=text,
-            model_used=model_id,
+            model_used="minimax-m3",
             tokens_input=tokens_in,
             tokens_output=tokens_out,
-            cost=cost,
+            cost=0.0,
             latency_ms=round(elapsed_ms, 1),
             confidence=1.0 if text.strip() else 0.0,
             raw_metadata={
                 "id": response.id,
-                "model": response.model,
                 "finish_reason": response.choices[0].finish_reason if response.choices else None,
             },
         )
