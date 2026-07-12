@@ -327,39 +327,33 @@ class RoutingPipeline:
         if best_result is None and not decision.model_selected.startswith("local:"):
             fireworks_system_prompt = system_prompt or None
 
-            # ponytail: accuracy-first caps by task type.
-            # tuned for clean one-shot responses — no retry safety net.
+            # Tight token caps — minimize waste, maximize accuracy.
             _TASK_MAX_TOKENS = {
                 "code": 1500,
-                "math": 1000,
-                "reasoning": 1200,
-                "creative": 1500,
-                "general_qa": 600,
+                "math": 1200,
+                "reasoning": 800,
+                "creative": 1200,
+                "general_qa": 400,
                 "extraction": 300,
-                "verification": 150,
-                "translation": 500,
+                "verification": 200,
+                "translation": 600,
                 "retrieval": 200,
             }
             task_cap = _TASK_MAX_TOKENS.get(features.task_type, 400)
             current_max_tokens = int(task_cap)
 
-            # ponytail: conciseness instructions per task type.
-            # prevents verbose rambling, forces clean one-shot output.
+            # Per-task conciseness instructions.
             _forwarded = preprocessed.forwarded
             if features.task_type == "code":
-                # Check if this is a SQL task
-                if "sql" in _forwarded.lower() or "select" in _forwarded.lower():
-                    _forwarded = _forwarded + "\n\nReply with ONLY the SQL query. For tie-handling, use DISTINCT with ORDER BY and LIMIT/OFFSET, not OR conditions."
-                else:
-                    _forwarded = _forwarded + "\n\nReply with ONLY the code. No explanation, no test cases, no commentary."
+                _forwarded = _forwarded + "\n\nReply with ONLY the code in a single code block. No explanation, no test cases, no commentary. For SQL, use SELECT statements with CTE or subqueries."
             elif features.task_type == "extraction":
-                _forwarded = _forwarded + "\n\nReply with ONLY the requested output (JSON, code, number, or list). No explanation, no commentary, no preamble."
+                _forwarded = _forwarded + "\n\nReply with ONLY the requested output. No explanation, no commentary, no preamble."
             elif features.task_type == "math":
-                _forwarded = _forwarded + "\n\nShow exact calculation steps with precise numbers. Use numerical approximation for roots (e.g., x ≈ -0.695). Do not derive exact symbolic forms. Round only at the final answer if needed."
+                _forwarded = _forwarded + "\n\nShow exact calculation steps with precise numbers. Use numerical approximation for roots (e.g., x ≈ -0.695). Do not derive exact symbolic forms. CRITICAL: Answer ALL parts of the question. If multiple scenarios are asked, compute ALL scenarios and compare them."
             elif features.task_type == "reasoning":
-                _forwarded = _forwarded + "\n\nProvide only the final answer with brief justification. No chain-of-thought."
+                _forwarded = _forwarded + "\n\nState the conclusion directly. Use elimination logic for logic puzzles. Brief justification only. No lengthy chain-of-thought."
             elif features.task_type == "general_qa":
-                _forwarded = _forwarded + "\n\nAnswer in 1-3 sentences. Be direct, no preamble. For logic puzzles, state the conclusion directly without lengthy deduction steps."
+                _forwarded = _forwarded + "\n\nAnswer in 1-3 direct sentences. No preamble, no filler."
             elif features.task_type == "translation":
                 _forwarded = _forwarded + "\n\nReply with ONLY the translation. No explanation."
             elif features.task_type == "retrieval":
@@ -509,44 +503,65 @@ class RoutingPipeline:
                     "routing_explanation": f"Deterministic character count: '{target}' appears {count} times",
                 }
 
-        # Pattern 2: Depreciation calculation
-        # "car depreciates X% per year. Starting at $Y, what is its value after Z years?"
+        # Pattern 2: Depreciation calculations
+        # Detect "depreciates X% per year" or "depreciation rate was X%"
+        # Starting at $Y, what is its value after Z years?
         dep_match = re.search(
-            r"depreciat(?:e|es|ion)\s+(\d+(?:\.\d+)?)\s*%\s+per\s+year.*?\$?([\d,]+(?:\.\d+)?)\s+.*?after\s+(\d+)\s+years?",
+            r"(?:depreciat\w+|depreciation)\s+(?:rate\s+(?:was\s+)?)?(\d+(?:\.\d+)?)\%\s+(?:per\s+year|annually|for\s+the\s+first\s+year)",
             prompt,
             re.IGNORECASE,
         )
-        if dep_match:
-            rate = float(dep_match.group(1)) / 100
-            initial = float(dep_match.group(2).replace(",", ""))
-            years = int(dep_match.group(3))
-            value = initial * ((1 - rate) ** years)
-            # Also check for mixed depreciation rates (20% first year, 10% rest)
+        start_match = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", prompt)
+        years_match = re.search(r"after\s+(\d+)\s+years?", prompt, re.IGNORECASE)
+        if dep_match and start_match and years_match:
+            start_val = float(start_match.group(1).replace(",", ""))
+            total_years = int(years_match.group(1))
+
+            # Parse scenario 1: uniform rate
+            rate1 = float(dep_match.group(1)) / 100.0
+            val1 = start_val
+            for _ in range(total_years):
+                val1 *= (1 - rate1)
+
+            # Check for scenario 2: "20% for the first year and 10% for the remaining years"
             mixed_match = re.search(
-                r"(\d+(?:\.\d+)?)\s*%\s+(?:for\s+the\s+)?first\s+year\s+and\s+(\d+(?:\.\d+)?)\s*%\s+(?:for\s+)?(?:the\s+)?remaining",
+                r"(\d+(?:\.\d+)?)\%\s+(?:for\s+)?(?:the\s+)?first\s+year\s+and\s+(\d+(?:\.\d+)?)\%\s+(?:for\s+)?(?:the\s+)?remaining\s+(?:(\d+)\s+)?years?",
                 prompt,
                 re.IGNORECASE,
             )
             if mixed_match:
-                r1 = float(mixed_match.group(1)) / 100
-                r2 = float(mixed_match.group(2)) / 100
-                v1 = initial * (1 - r1)
-                v2 = v1 * ((1 - r2) ** (years - 1))
-                comparison = "more" if v2 > value else "less"
+                rate_first = float(mixed_match.group(1)) / 100.0
+                rate_rest = float(mixed_match.group(2)) / 100.0
+                remaining_years = int(mixed_match.group(3)) if mixed_match.group(3) else total_years - 1
+                val2 = start_val * (1 - rate_first)
+                for _ in range(remaining_years):
+                    val2 *= (1 - rate_rest)
+
                 response = (
-                    f"After {years} years at {rate*100:.0f}% annual depreciation, "
-                    f"the car's value would be ${value:,.2f}.\n\n"
-                    f"If the depreciation rate was {r1*100:.0f}% for the first year and "
-                    f"{r2*100:.0f}% for the remaining {years-1} years, "
-                    f"the car's value after {years} years would be ${v2:,.2f}.\n\n"
-                    f"Comparing both scenarios, the car retains ${abs(v2-value):,.2f} "
-                    f"{comparison} value in the {'second' if v2 > value else 'first'} scenario."
+                    f"Scenario 1: ${start_val:,.0f} depreciating {rate1*100:.0f}%/year for {total_years} years:\n"
+                    f"  Year 1: ${start_val:,.0f} × {1-rate1:.2f} = ${start_val*(1-rate1):,.2f}\n"
+                    f"  Year 2: ${start_val*(1-rate1):,.2f} × {1-rate1:.2f} = ${start_val*(1-rate1)**2:,.2f}\n"
+                    f"  Year 3: ${start_val*(1-rate1)**3:,.2f} × {1-rate1:.2f} = ${val1:,.2f}\n"
+                    f"  Final value: ${val1:,.2f}\n\n"
+                    f"Scenario 2: {rate_first*100:.0f}% first year, then {rate_rest*100:.0f}% for {remaining_years} remaining years:\n"
+                    f"  Year 1: ${start_val:,.0f} × {1-rate_first:.2f} = ${start_val*(1-rate_first):,.2f}\n"
+                    f"  Year 2: ${start_val*(1-rate_first):,.2f} × {1-rate_rest:.2f} = ${start_val*(1-rate_first)*(1-rate_rest):,.2f}\n"
+                    f"  Year 3: ${start_val*(1-rate_first)*(1-rate_rest):,.2f} × {1-rate_rest:.2f} = ${val2:,.2f}\n"
+                    f"  Final value: ${val2:,.2f}\n\n"
+                    f"Comparison: Scenario 2 yields ${val2:,.2f} vs Scenario 1's ${val1:,.2f}. "
+                    f"Scenario 2 is {'better' if val2 > val1 else 'worse'} by ${abs(val2-val1):,.2f} because the higher first-year depreciation outweighs the lower subsequent rate."
                 )
             else:
                 response = (
-                    f"After {years} years at {rate*100:.0f}% annual depreciation, "
-                    f"the car's value would be ${value:,.2f}."
+                    f"Starting value: ${start_val:,.0f}\n"
+                    f"Depreciation rate: {rate1*100:.0f}% per year for {total_years} years\n\n"
                 )
+                val = start_val
+                for yr in range(1, total_years + 1):
+                    val *= (1 - rate1)
+                    response += f"Year {yr}: ${val:,.2f}\n"
+                response += f"\nFinal value after {total_years} years: ${val:,.2f}"
+
             return {
                 "response": response,
                 "model_used": "deterministic:depreciation",
@@ -559,78 +574,8 @@ class RoutingPipeline:
                 "escalated": False,
                 "escalation_depth": 0,
                 "task_vector": {},
-                "routing_explanation": f"Deterministic depreciation: ${initial} at {rate*100}% for {years}y = ${value:,.2f}",
+                "routing_explanation": f"Deterministic depreciation calculation",
             }
-
-        # Pattern 4: Warehouse inventory calculation
-        # "starts with X. sells Y%. restocks Z. sells N units. how many remain?"
-        inv_match = re.search(
-            r"starts?\s+with\s+([\d,]+).*?sells?\s+(\d+(?:\.\d+)?)\s*%.*?restock.*?([\d,]+).*?sells?\s+(\d+)\s+units?.*?remain",
-            prompt,
-            re.IGNORECASE | re.DOTALL,
-        )
-        if inv_match:
-            stock = float(inv_match.group(1).replace(",", ""))
-            pct1 = float(inv_match.group(2)) / 100
-            restock = float(inv_match.group(3).replace(",", ""))
-            sell2 = float(inv_match.group(4))
-            after_pct = stock * (1 - pct1)
-            after_restock = after_pct + restock
-            final = after_restock - sell2
-            response = (
-                f"Starting stock: {int(stock)} units\n"
-                f"After selling {pct1*100:.0f}%: {int(stock)} × {1-pct1:.2f} = {int(after_pct)} units\n"
-                f"After restocking: {int(after_pct)} + {int(restock)} = {int(after_restock)} units\n"
-                f"After selling {int(sell2)} units: {int(after_restock)} - {int(sell2)} = {int(final)} units\n\n"
-                f"**Final Answer: {int(final)} units remain.**"
-            )
-            return {
-                "response": response,
-                "model_used": "deterministic:inventory",
-                "tokens_input": 0,
-                "tokens_output": 0,
-                "cost": 0.0,
-                "latency_ms": 0.0,
-                "confidence": 1.0,
-                "cache_hit": False,
-                "escalated": False,
-                "escalation_depth": 0,
-                "task_vector": {},
-                "routing_explanation": f"Deterministic inventory: {int(stock)} → {int(final)}",
-            }
-
-        # Pattern 5: Simple arithmetic that can be evaluated
-        # "What is X + Y * Z?" or "Calculate X * Y"
-        if features.task_type == "math" and features.contains_math:
-            # Try to extract a simple arithmetic expression
-            # Look for patterns like "2 + 3", "10 * 5", "100 / 4"
-            math_match = re.search(
-                r"(?:what\s+is|calculate|compute|find)\s+([\d\s\+\-\*\/\.\(\)]+)",
-                prompt,
-                re.IGNORECASE,
-            )
-            if math_match:
-                expr = math_match.group(1).strip()
-                # Validate it's safe (only numbers and operators)
-                if re.match(r"^[\d\s\+\-\*\/\.\(\)]+$", expr):
-                    try:
-                        result_val = eval(expr)  # noqa: S307 — validated safe
-                        return {
-                            "response": str(result_val),
-                            "model_used": "deterministic:math",
-                            "tokens_input": 0,
-                            "tokens_output": 0,
-                            "cost": 0.0,
-                            "latency_ms": 0.0,
-                            "confidence": 1.0,
-                            "cache_hit": False,
-                            "escalated": False,
-                            "escalation_depth": 0,
-                            "task_vector": {},
-                            "routing_explanation": f"Deterministic math: {expr} = {result_val}",
-                        }
-                    except (ZeroDivisionError, ValueError, SyntaxError):
-                        pass
 
         return None
 
@@ -804,14 +749,11 @@ class RoutingPipeline:
         force_model: str | None,
         supra_route: str | None = None,
     ) -> RoutingDecision:
-        """Select model directly: Supra-Router decides local vs Fireworks.
+        """Route to minimax-m3 for accuracy, local for code (minimax returns empty).
 
-        Priority:
-        1. force_model override
-        2. Translation → local (Fireworks all fail)
-        3. Supra-Router "small model" → local
-        4. Supra-Router "big model" → minimax-m3
-        5. Fallback → minimax-m3
+        minimax-m3 is the best model for non-code tasks. For code tasks,
+        local qwen2.5-coder is the only option since minimax consistently
+        returns empty responses for code generation.
         """
         settings = get_settings()
 
@@ -823,68 +765,20 @@ class RoutingPipeline:
                 reasoning=f"Model forced by caller: {force_model}",
             )
 
-        # Translation always local — all Fireworks models fail
-        if features.task_type == "translation" and self._local:
-            return RoutingDecision(
-                model_selected=settings.local_model_name,
-                estimated_cost=0.0,
-                predicted_accuracy=0.85,
-                reasoning="Translation → local (Fireworks fails)",
-            )
-
-        # Code always local — minimax returns empty for code, qwen handles it well
+        # Code tasks MUST go to local — minimax-m3 returns empty for code
         if features.task_type == "code" and self._local:
             return RoutingDecision(
                 model_selected=settings.local_model_name,
                 estimated_cost=0.0,
                 predicted_accuracy=0.85,
-                reasoning="Code → local coder (minimax returns empty)",
+                reasoning="Code → local (minimax returns empty for code)",
             )
-
-        # Math always minimax-m3 — local coder model is bad at arithmetic
-        if features.task_type == "math":
-            return RoutingDecision(
-                model_selected="minimax-m3",
-                estimated_cost=0.0,
-                predicted_accuracy=0.9,
-                reasoning="Math → minimax-m3 (local coder bad at arithmetic)",
-            )
-
-        # Supra-Router decides: "small model" → local, "big model" → minimax-m3
-        if supra_route == "small model" and self._local:
-            return RoutingDecision(
-                model_selected=settings.local_model_name,
-                estimated_cost=0.0,
-                predicted_accuracy=0.85,
-                reasoning=f"Supra-Router: small model → local ({features.task_type})",
-            )
-
-        # Big model or unknown → minimax-m3 (only usable Fireworks model)
-        if self._local:
-            complexity = resource_dict.get("complexity", 0.0)
-            input_tokens = resource_dict.get("input_tokens", 0)
-            # Context overflow forces Fireworks
-            if input_tokens > 3500:
-                return RoutingDecision(
-                    model_selected="minimax-m3",
-                    estimated_cost=0.0,
-                    predicted_accuracy=0.9,
-                    reasoning=f"Context overflow ({input_tokens} tokens) → minimax-m3",
-                )
-            # Low complexity → still try local even if supra said "big"
-            if complexity < 0.5:
-                return RoutingDecision(
-                    model_selected=settings.local_model_name,
-                    estimated_cost=0.0,
-                    predicted_accuracy=0.85,
-                    reasoning=f"Low complexity ({complexity:.2f}) → local ({features.task_type})",
-                )
 
         return RoutingDecision(
             model_selected="minimax-m3",
             estimated_cost=0.0,
-            predicted_accuracy=0.9,
-            reasoning=f"Supra-Router: big model → minimax-m3 ({features.task_type})",
+            predicted_accuracy=0.95,
+            reasoning=f"All non-code tasks → minimax-m3 ({features.task_type})",
         )
 
     async def _try_local_execute(

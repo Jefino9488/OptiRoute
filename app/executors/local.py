@@ -38,13 +38,13 @@ _TEMP_MAP: dict[str, float] = {
 
 _MAX_TOKENS_MAP: dict[str, int] = {
     "code": 1500,
-    "math": 1000,
+    "math": 800,
     "extraction": 300,
-    "translation": 500,
-    "reasoning": 1200,
+    "translation": 600,
+    "reasoning": 800,
     "retrieval": 200,
-    "creative": 1500,
-    "general_qa": 600,
+    "creative": 1200,
+    "general_qa": 400,
 }
 
 

@@ -30,21 +30,19 @@ _TEMP_MAP: dict[str, float] = {
     "general_qa": 0.4,
 }
 
-# ponytail: safety cap only. pipeline passes a per-task cap already; this is the ceiling
-# if a caller forgets. tightened after minimax verbosity caused 5k+ token outputs.
+# Safety cap — pipeline passes per-task cap; this is the ceiling.
 _TASK_MAX_TOKENS: dict[str, int] = {
-    "code": 1200,
-    "math": 1200,
-    "reasoning": 1200,
-    "creative": 1500,
-    "general_qa": 600,
-    "extraction": 400,
-    "translation": 800,
-    "retrieval": 400,
+    "code": 1500,
+    "math": 800,
+    "reasoning": 800,
+    "creative": 1200,
+    "general_qa": 400,
+    "extraction": 300,
+    "translation": 600,
+    "retrieval": 200,
 }
 
-# ponytail: stop sequences prevent verbose model rambling. code stops after
-# closing fence; math stops after boxed answer; general stops after answer.
+# Stop sequences prevent verbose rambling.
 _STOP_SEQUENCES: dict[str, list[str]] = {
     "code": ["```", "\n\n\n"],
     "math": ["\\boxed{", "\n\n---", "Therefore,", "The final answer"],
