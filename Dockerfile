@@ -46,8 +46,15 @@ RUN mkdir -p /models
 
 # Mount local models/ dir at build time; download from HF Hub if not present.
 RUN --mount=type=bind,source=models,target=/local_models \
-    echo "Copying all local models..." && \
-    cp /local_models/*.gguf /models/ || echo "No local models found."
+    cp /local_models/*.gguf /models/ 2>/dev/null || true && \
+    if [ ! -f /models/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf ]; then \
+        echo "Downloading Ministral-3B..."; \
+        wget -q -O /models/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf https://huggingface.co/bartowski/mistralai_Ministral-3-3B-Instruct-2512-GGUF/resolve/main/mistralai_Ministral-3-3B-Instruct-2512-Q4_K_M.gguf; \
+    fi && \
+    if [ ! -f /models/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf ]; then \
+        echo "Downloading Phi-4-mini..."; \
+        wget -q -O /models/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf; \
+    fi
 
 # Download Supra-Router-51M GGUF (~37MB, for ML-based prompt routing)
 RUN python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='SupraLabs/Supra-Router-51M-gguf', filename='Supra-Router-51M-F16.gguf', local_dir='/models', local_dir_use_symlinks=False)"
@@ -102,9 +109,6 @@ COPY main.py agent.py ./
 
 # ── Local model env vars ───────────────────────────────────────────────────────
 ENV LOCAL_MODEL_ENABLED=true
-ENV LOCAL_MODEL_PATH=models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf
-ENV LOCAL_MODEL_NAME=local:qwen2.5-coder-7b
-ENV LOCAL_MODEL_CONTEXT_LENGTH=8192
 ENV LOCAL_MODEL_THREADS=4
 ENV LOCAL_ROUTER_ENABLED=false
 ENV LOCAL_SERVER_URL=http://localhost:8080/v1
