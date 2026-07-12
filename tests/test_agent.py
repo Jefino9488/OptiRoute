@@ -23,7 +23,7 @@ import pytest
 
 def _make_route_result(
     answer: str = "Test answer",
-    model: str = "local:qwen2.5-coder-7b",
+    model: str = "local:ministral-3b",
     cost: float = 0.0,
     tokens_in: int = 10,
     tokens_out: int = 20,

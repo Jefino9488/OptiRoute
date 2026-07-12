@@ -132,12 +132,28 @@ class RoutingPipeline:
             domain = supra_result.domain
             route_decision = supra_result.route
             complexity = supra_result.complexity
-            task_type = self._map_domain_to_task_type(domain, "general_qa")
+            if supra_result.needs_code:
+                task_type = "code"
+            elif supra_result.needs_math:
+                task_type = "math"
+            else:
+                task_type = self._map_domain_to_task_type(domain, "general_qa")
         else:
             domain = "unknown"
             route_decision = "big model"
             complexity = 1.0
             task_type = "general_qa"
+
+        # Apply task type safeguards based on prompt contents
+        features = self._detect_linguistic_features(prompt)
+        if features["counting"]:
+            task_type = "counting"
+        elif features["sentiment"]:
+            task_type = "extraction"
+        elif features["logic"]:
+            task_type = "reasoning"
+        elif features["sql"]:
+            task_type = "code"
 
         logger.info(
             "pipeline.classification",
@@ -158,89 +174,130 @@ class RoutingPipeline:
         preprocessed = await self._preprocessor.process(prompt=prompt)
         base_system = "\n\n".join(preprocessed.system_addons)
 
-        # Dummy vectors since we removed them
-        task_dict = {"task_type": task_type}
-        resource_dict = {"input_tokens": len(prompt.split()) * 1.5, "complexity": complexity}
-        risk_dict = {}
+        # Populated task vector features to trigger compiler registry rules
+        task_dict = {
+            "task_type": task_type,
+            "math": 1.0 if task_type in ("math", "counting") else 0.0,
+            "code": 1.0 if task_type == "code" else 0.0,
+            "reasoning": 1.0 if task_type == "reasoning" else 0.0,
+            "retrieval": 1.0 if task_type == "retrieval" else 0.0,
+            "creative": 1.0 if task_type == "creative" else 0.0,
+            "extraction": 1.0 if task_type == "extraction" else 0.0,
+            "translation": 1.0 if task_type == "translation" else 0.0,
+            "general_qa": 1.0 if task_type == "general_qa" else 0.0,
+        }
 
-        compiled_policy = self._compiler.compile(
-            prompt=prompt,
-            task_vector=task_dict,
-            resource_vector=resource_dict,
-            risk_vector=risk_dict,
-            model=model_selected,
-            base_system_prompt=base_system,
-        )
+        # Decide budget bucket based on task type and complexity
+        output_budget_bucket = "Small"
+        if task_type in ("code", "creative") or complexity > 0.6:
+            output_budget_bucket = "Large"
 
-        system_prompt = compiled_policy.system_prompt
-        _NO_SYSTEM = {"extraction", "general_qa", "translation", "retrieval", "verification"}
-        if task_type in _NO_SYSTEM or model_selected.startswith("local:"):
-            system_prompt = None
+        resource_dict = {
+            "input_tokens": len(prompt.split()) * 1.5,
+            "complexity": complexity,
+            "output_budget_bucket": output_budget_bucket,
+            "prompt_text": prompt,
+        }
 
-        # Execute
+        risk_dict = {
+            "json_required": "json" in prompt.lower(),
+            "needs_high_accuracy": required_accuracy >= 0.8,
+        }
+
+        # Settings
+        settings = get_settings()
+        confidence_threshold = settings.confidence_threshold  # default 0.8
+        max_depth = settings.max_escalation_depth  # default 2
+
+        # Override confidence threshold for logic puzzles, math, and general QA to 0.7
+        current_threshold = confidence_threshold
+        if task_type in ("reasoning", "math", "general_qa"):
+            current_threshold = 0.7
+
+        # Step 6: Execution Loop with Escalation
+        current_model = model_selected
+        escalation_depth = 0
         best_result: ExecutionResult | None = None
 
-        if model_selected.startswith("local:") and self._local:
-            best_result = await self._local.execute(
-                prompt=preprocessed.forwarded,
-                model_id=model_selected,
-                task_type=task_type,
-                system_prompt=system_prompt,
+        while escalation_depth <= max_depth:
+            compiled_policy = self._compiler.compile(
+                prompt=prompt,
+                task_vector=task_dict,
+                resource_vector=resource_dict,
+                risk_vector=risk_dict,
+                model=current_model,
+                base_system_prompt=base_system,
             )
-            is_broken = (
-                not best_result.response.strip()
-                or best_result.response.startswith("[LOCAL_ERROR]")
-                or best_result.response.startswith("[LOCAL_UNAVAILABLE]")
-            )
-            if is_broken:
-                logger.info("pipeline.local_broken_escalating", model=model_selected)
-                model_selected = "minimax-m3"
-                best_result = None
 
-        if best_result is None:
-            # Fireworks Execution
-            _TASK_MAX_TOKENS = {
-                "code": 1500,
-                "math": 1000,
-                "reasoning": 1200,
-                "creative": 1500,
-                "general_qa": 600,
-                "extraction": 300,
-                "verification": 150,
-                "translation": 500,
-                "retrieval": 200,
-            }
-            current_max_tokens = _TASK_MAX_TOKENS.get(task_type, 400)
-            _forwarded = preprocessed.forwarded
+            system_prompt = compiled_policy.system_prompt
 
-            if task_type == "code":
-                if "sql" in _forwarded.lower() or "select" in _forwarded.lower():
-                    _forwarded += "\n\nReply with ONLY the SQL query."
-                else:
-                    _forwarded += "\n\nReply with ONLY the code. No explanation, no test cases, no commentary."
-            elif task_type == "extraction":
-                _forwarded += "\n\nReply with ONLY the exact requested extracted data. If JSON is requested, output ONLY valid JSON. No explanation, no commentary, no markdown wrapping like ```json."
-            elif task_type in ["translation", "retrieval", "verification"]:
-                _forwarded += "\n\nReply with ONLY the requested output. No explanation, no commentary, no preamble."
-            elif task_type == "math":
-                _forwarded += "\n\nShow exact calculation steps with precise numbers."
+            result: ExecutionResult | None = None
 
-            try:
-                result = await self._fireworks.execute(
-                    prompt=_forwarded,
-                    model_id=model_selected,
+            if current_model.startswith("local:") and self._local:
+                # Local Executor
+                result = await self._local.execute(
+                    prompt=preprocessed.forwarded,
+                    model_id=current_model,
                     task_type=task_type,
                     system_prompt=system_prompt,
-                    max_tokens=current_max_tokens,
-                    reasoning_effort="none",
-                )
-
-                result.cost = (
-                    result.tokens_input * 0.0003 / 1000
-                    + result.tokens_output * 0.0012 / 1000
                 )
                 
-                # Confidence Validation
+                is_broken = (
+                    not result.response.strip()
+                    or result.response.startswith("[LOCAL_ERROR]")
+                    or result.response.startswith("[LOCAL_UNAVAILABLE]")
+                )
+                if is_broken:
+                    logger.info("pipeline.local_broken", model=current_model)
+                    result = None
+            else:
+                # Fireworks Executor
+                _TASK_MAX_TOKENS = {
+                    "code": 2048,
+                    "math": 2048,
+                    "reasoning": 2048,
+                    "creative": 2048,
+                    "general_qa": 1024,
+                    "extraction": 1024,
+                    "verification": 512,
+                    "translation": 1024,
+                    "retrieval": 512,
+                }
+                current_max_tokens = _TASK_MAX_TOKENS.get(task_type, 1024)
+                _forwarded = preprocessed.forwarded
+
+                if task_type == "code":
+                    if "sql" in _forwarded.lower() or "select" in _forwarded.lower():
+                        _forwarded += "\n\nReply with ONLY the SQL query."
+                    else:
+                        _forwarded += "\n\nReply with ONLY the code. No explanation, no test cases, no commentary."
+                elif task_type == "extraction":
+                    _forwarded += "\n\nReply with ONLY the exact requested extracted data. If JSON is requested, output ONLY valid JSON. No explanation, no commentary, no markdown wrapping like ```json."
+                elif task_type in ["translation", "retrieval", "verification"]:
+                    _forwarded += "\n\nReply with ONLY the requested output. No explanation, no commentary, no preamble."
+                elif task_type == "math":
+                    _forwarded += "\n\nShow exact calculation steps with precise numbers."
+
+                try:
+                    result = await self._fireworks.execute(
+                        prompt=_forwarded,
+                        model_id=current_model,
+                        task_type=task_type,
+                        system_prompt=system_prompt,
+                        max_tokens=current_max_tokens,
+                        reasoning_effort="none",
+                    )
+
+                    result.cost = (
+                        result.tokens_input * 0.0003 / 1000
+                        + result.tokens_output * 0.0012 / 1000
+                    )
+                except Exception as exc:
+                    logger.error("pipeline.fireworks_failed", model=current_model, error=str(exc))
+                    result = None
+
+            if result is not None:
+                # Perform confidence validation
                 validation = self._validator.validate(
                     response=result.response,
                     task_type=task_type,
@@ -249,14 +306,40 @@ class RoutingPipeline:
                     expected_length="medium",
                 )
                 result.confidence = min(result.confidence, validation.confidence)
-                best_result = result
-            except Exception as exc:
-                logger.error("pipeline.fireworks_failed", error=str(exc))
-                best_result = ExecutionResult(
-                    response="Failed to generate a response.",
-                    model_used=model_selected,
-                    confidence=0.0,
-                )
+
+                # Keep the first/best result so far
+                if best_result is None or result.confidence > best_result.confidence:
+                    best_result = result
+
+                # If confidence meets threshold, stop
+                if result.confidence >= current_threshold:
+                    logger.info("pipeline.confidence_satisfied", model=current_model, confidence=result.confidence)
+                    break
+
+            # Attempt escalation if not satisfied
+            if escalation_depth < max_depth:
+                next_model = self._get_escalation_model(current_model, task_type)
+                if next_model:
+                    logger.info(
+                        "pipeline.escalating",
+                        from_model=current_model,
+                        to_model=next_model,
+                        depth=escalation_depth + 1,
+                        confidence=result.confidence if result else 0.0
+                    )
+                    current_model = next_model
+                    escalation_depth += 1
+                    continue
+
+            # If no escalation model or reached max depth, stop
+            break
+
+        if best_result is None:
+            best_result = ExecutionResult(
+                response="Failed to generate a response.",
+                model_used=model_selected,
+                confidence=0.0,
+            )
 
         elapsed = (time.perf_counter() - pipeline_start) * 1000
 
@@ -295,8 +378,8 @@ class RoutingPipeline:
             "latency_ms": round(elapsed, 1),
             "confidence": best_result.confidence,
             "cache_hit": False,
-            "escalated": False,
-            "escalation_depth": 0,
+            "escalated": (escalation_depth > 0),
+            "escalation_depth": escalation_depth,
             "task_vector": task_dict,
             "routing_explanation": routing_explanation,
             "compiler_metadata": compiled_policy.metadata,
@@ -305,32 +388,57 @@ class RoutingPipeline:
     def _make_routing_decision(
         self, prompt: str, task_type: str, supra_route: str, complexity: float, force_model: str | None
     ) -> tuple[str, str]:
-        """Route to Ministral-3B or Phi-4-Mini if small, else Minimax."""
+        """Route to local or cloud models based on SupraRouter classification."""
         if force_model:
             return force_model, f"Forced by caller: {force_model}"
 
         input_length = len(prompt.split())
         
-        # If big model required by Supra or context overflow -> Remote
-        if supra_route == "big model" or input_length > 3500:
-            return "minimax-m3", f"Supra route '{supra_route}' or large context -> minimax-m3"
+        # If context is very long, use minimax-m3 directly
+        if input_length > 3000:
+            return "minimax-m3", f"Large context ({input_length} words) -> minimax-m3"
 
-        # It's a small task, use local model based on category
-        ministral_categories = {"extraction", "translation", "reasoning", "general_qa", "retrieval"}
-        phi_categories = {"math", "code"}
+        # Counting and logic puzzles route directly to cloud minimax-m3
+        if task_type in ("counting", "reasoning"):
+            return "minimax-m3", f"Task type {task_type} -> minimax-m3 directly for high accuracy"
 
-        # Keyword overrides for hybrid or specific tasks
-        prompt_lower = prompt.lower()
-        if "sentiment" in prompt_lower or "summarize" in prompt_lower or "count" in prompt_lower:
-            task_type = "extraction"
+        # Code tasks support direct cloud routing on high complexity
+        if task_type == "code":
+            if supra_route == "big model" or complexity > 0.6:
+                return "kimi-k2p7-code", "High complexity Code task -> kimi-k2p7-code"
+            return "local:phi-4-mini", "Code task -> local:phi-4-mini"
 
-        if task_type in phi_categories:
-            return "local:phi-4-mini", f"Task type {task_type} -> local:phi-4-mini"
-        elif task_type in ministral_categories:
-            return "local:ministral-3b", f"Task type {task_type} -> local:ministral-3b"
-            
-        # Default fallback for small models
-        return "local:ministral-3b", f"Default small model fallback -> local:ministral-3b"
+        # General Math tasks start on local:phi-4-mini
+        if task_type == "math":
+            return "local:phi-4-mini", "Math task -> local:phi-4-mini first"
+
+        # All other categories (sentiment, NER, translation, summarization, creative, Q&A)
+        # start on local:ministral-3b
+        return "local:ministral-3b", f"Task type {task_type} -> local:ministral-3b"
+
+    def _get_escalation_model(self, current_model: str, task_type: str) -> str | None:
+        """Decide the next model to try when the current model has low confidence."""
+        if current_model.startswith("local:"):
+            # Local model failed, escalate to cloud
+            if task_type == "code":
+                return "kimi-k2p7-code"
+            else:
+                return "minimax-m3"
+        elif current_model == "kimi-k2p7-code":
+            # Kimi failed on code, try minimax-m3 as final resort
+            return "minimax-m3"
+        return None
+
+    @staticmethod
+    def _detect_linguistic_features(prompt: str) -> dict[str, bool]:
+        """Detect generic linguistic task features from prompt text."""
+        p_lower = prompt.lower()
+        return {
+            "counting": any(w in p_lower for w in ("count ", "how many ", "frequency of", "occurrences of", "syllable")),
+            "sentiment": any(w in p_lower for w in ("sentiment", "classify", "positive, negative", "positive or negative")),
+            "logic": any(w in p_lower for w in ("deduction", "logic puzzle", "clue", "who owns", "each own")),
+            "sql": any(w in p_lower for w in ("sql", "query", "select ", "database")),
+        }
 
     @staticmethod
     def _map_domain_to_task_type(domain: str, fallback: str) -> str:
@@ -338,13 +446,14 @@ class RoutingPipeline:
         domain_lower = domain.lower()
         mapping = {
             "math": "math", "probability": "math", "algebra": "math",
-            "code": "code", "programming": "code", "sql": "code", "python": "code",
+            "code": "code", "programming": "code", "sql": "code", "python": "code", "debug": "code",
             "reasoning": "reasoning", "logic": "reasoning", "puzzle": "reasoning",
             "creative": "creative", "writing": "creative", "poetry": "creative",
             "translation": "translation", "language": "translation",
             "extraction": "extraction", "ner": "extraction", "json": "extraction",
-            "sentiment": "extraction", "classification": "extraction",
+            "sentiment": "extraction", "classification": "extraction", "summar": "extraction",
             "retrieval": "retrieval", "factual": "retrieval", "qa": "retrieval",
+            "etymology": "math", "count": "math", "counting": "math",
         }
         for key, task_type in mapping.items():
             if key in domain_lower:

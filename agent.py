@@ -239,7 +239,7 @@ async def main() -> None:
     print(
         f"\n[agent] OK Complete: {len(results)} tasks in {total_s:.1f}s\n"
         f"[agent]   Batch size:      {BATCH_SIZE}\n"
-        f"[agent]   Tasks local:     {local_count} (qwen2.5-coder-7b, $0)\n"
+        f"[agent]   Tasks local:     {local_count} ($0)\n"
         f"[agent]   Tasks fireworks:  {fireworks_count} (minimax-m3)\n"
         f"[agent]   Tasks deterministic: {deterministic_count}\n"
         f"[agent]   -----------------------------------\n"

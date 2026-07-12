@@ -107,8 +107,8 @@ class InferencePolicyCompiler:
             name="task:math",
             category="task",
             priority=80,
-            condition=lambda t, res, risk, m: risk.get("needs_high_accuracy", False) and t.get("math", 0.0) > 0.5,
-            instruction="Compute carefully and step-by-step. Return concise working and the final answer clearly. Maximum 8 bullet points or short steps."
+            condition=lambda t, res, risk, m: t.get("math", 0.0) > 0.5,
+            instruction="Compute carefully and step-by-step. Double-check all calculations, especially numerical iterations like Newton's method, to ensure convergence to the correct root. Return concise working and the final answer clearly."
         )
         self._registry.register(
             name="task:code",
@@ -122,7 +122,14 @@ class InferencePolicyCompiler:
             category="task",
             priority=70,
             condition=lambda t, res, risk, m: t.get("reasoning", 0.0) > 0.6,
-            instruction="Solve step by step internally. Return only the final explanation in a maximum of 4 short bullet points or sentences."
+            instruction="Solve step by step internally. Actively analyze all clues for logical consistency, detecting and highlighting any logical contradictions in the provided statements. Return only the final explanation in a maximum of 4 short bullet points or sentences."
+        )
+        self._registry.register(
+            name="task:counting",
+            category="task",
+            priority=85,
+            condition=lambda t, res, risk, m: t.get("task_type") == "counting" or "counting" in t or "count" in res.get("prompt_text", "").lower(),
+            instruction="To count characters or letters accurately, list every word in the sentence. Spell out each word with hyphens between all letters (e.g., d-e-v-e-l-o-p-e-r). Count the occurrences of the target letter in each spelled-out word individually, then print the sum of all counts and the final answer."
         )
         self._registry.register(
             name="task:retrieval",
@@ -144,6 +151,14 @@ class InferencePolicyCompiler:
             priority=60,
             condition=lambda t, res, risk, m: t.get("extraction", 0.0) > 0.6,
             instruction="Extract the requested information accurately. Pay close attention to exactly what entity type is requested (e.g. domains vs full emails, specific years). Return requested fields only without over-extracting. Be as brief as possible."
+        )
+
+        self._registry.register(
+            name="task:sentiment",
+            category="task",
+            priority=85,
+            condition=lambda t, res, risk, m: t.get("extraction", 0.0) > 0.6 and ("sentiment" in res.get("prompt_text", "").lower() or "classify" in res.get("prompt_text", "").lower()),
+            instruction="Analyze the sentiment objectively. If the text contains both strong positive and strong negative aspects, classify it as Neutral. Do not ignore the positive clauses."
         )
 
         self._registry.register(

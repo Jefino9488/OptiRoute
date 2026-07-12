@@ -61,8 +61,17 @@ async def list_models() -> list[ModelInfo]:
     """List available models."""
     return [
         ModelInfo(
-            model_id="local:qwen2.5-coder-7b",
-            capabilities={"math": 0.85, "code": 0.92, "translation": 0.85, "general_qa": 0.88},
+            model_id="local:ministral-3b",
+            capabilities={"math": 0.50, "code": 0.40, "translation": 0.95, "general_qa": 0.90},
+            cost_per_1k_input=0.0,
+            cost_per_1k_output=0.0,
+            max_context=8192,
+            fails_on=[],
+            supports_thinking=False,
+        ),
+        ModelInfo(
+            model_id="local:phi-4-mini",
+            capabilities={"math": 0.95, "code": 0.95, "translation": 0.60, "general_qa": 0.90},
             cost_per_1k_input=0.0,
             cost_per_1k_output=0.0,
             max_context=8192,

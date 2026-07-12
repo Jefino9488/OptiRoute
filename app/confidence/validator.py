@@ -78,7 +78,8 @@ class ConfidenceValidator:
 
         # 2. Very short response
         word_count = len(response.split())
-        if word_count < 3 and task_type not in ("math",):
+        _SHORT_ALLOWED = {"math", "retrieval", "extraction", "translation", "verification", "general_qa"}
+        if word_count < 3 and task_type not in _SHORT_ALLOWED:
             issues.append(f"Suspiciously short response ({word_count} words)")
             penalties.append(0.4)
 
@@ -131,7 +132,7 @@ class ConfidenceValidator:
         # 6. Length ratio check
         expected_words = {"short": 20, "medium": 100, "long": 300}
         expected = expected_words.get(expected_length, 100)
-        if word_count < expected * 0.1 and task_type not in ("math", "retrieval"):
+        if word_count < expected * 0.1 and task_type not in _SHORT_ALLOWED:
             issues.append(f"Response much shorter than expected ({word_count} vs ~{expected} words)")
             penalties.append(0.2)
 

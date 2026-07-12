@@ -52,7 +52,7 @@ class SupraRouter:
 
     def __init__(self, server_url: str = "http://localhost:8081") -> None:
         self._server_url = server_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=10.0)
+        self._client = httpx.AsyncClient(timeout=30.0)
 
     async def close(self) -> None:
         """Shut down the HTTP client."""

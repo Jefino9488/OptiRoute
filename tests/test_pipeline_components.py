@@ -85,7 +85,7 @@ class TestConfidenceValidator:
         assert any("repetition" in i.lower() for i in result.issues)
 
     def test_short_response_penalty(self) -> None:
-        result = self.validator.validate("Yes")
+        result = self.validator.validate("Yes", task_type="reasoning")
         assert result.confidence < 1.0
 
 

@@ -27,7 +27,11 @@ _FAILURE_THRESHOLD: float = 0.5
 # Supports reasoning_effort parameter: "none", "low", "medium", "high", "max"
 # thinking_cost_multiplier: additional cost factor when thinking is enabled.
 MODEL_THINKING_PROPERTIES: dict[str, dict[str, Any]] = {
-    "local:qwen2.5-coder-7b": {
+    "local:ministral-3b": {
+        "supports_thinking": False,
+        "thinking_cost_multiplier": 1.0,
+    },
+    "local:phi-4-mini": {
         "supports_thinking": False,
         "thinking_cost_multiplier": 1.0,
     },
