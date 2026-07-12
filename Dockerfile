@@ -46,30 +46,39 @@ RUN mkdir -p /models
 
 # Mount local models/ dir at build time; download from HF Hub if not present.
 RUN --mount=type=bind,source=models,target=/local_models \
-    if [ -f /local_models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf ]; then \
-        echo "Found local model, copying..."; \
-        cp /local_models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf /models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf; \
-    else \
-        echo "Local model not found, downloading from HF Hub..."; \
-        python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='lmstudio-community/Qwen2.5-Coder-7B-Instruct-GGUF', filename='Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf', local_dir='/models', local_dir_use_symlinks=False)"; \
-    fi
+    echo "Copying all local models..." && \
+    cp /local_models/*.gguf /models/ || echo "No local models found."
 
 # Download Supra-Router-51M GGUF (~37MB, for ML-based prompt routing)
 RUN python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='SupraLabs/Supra-Router-51M-gguf', filename='Supra-Router-51M-F16.gguf', local_dir='/models', local_dir_use_symlinks=False)"
 
-# ── Stage 3: Final runtime image ──────────────────────────────────────────────
+# ── Stage 3: Python dependencies builder ──────────────────────────────────────
+FROM python:3.12-slim AS python-builder
+
+WORKDIR /app
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install compilers needed for llama-cpp-python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-cache
+
+# ── Stage 4: Final runtime image ──────────────────────────────────────────────
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# curl — health check polling in entrypoint.sh
 # libgomp1 — GNU OpenMP runtime required by llama-server CPU kernels
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Co-locate ALL llama.cpp files in /opt/llama so backend plugin loader
 # (ggml_backend_load_all) finds libggml-cpu-*.so siblings at startup.
@@ -80,15 +89,11 @@ RUN ln -s /opt/llama/llama-server /usr/local/bin/llama-server && \
     echo "/opt/llama" > /etc/ld.so.conf.d/llama.conf && \
     ldconfig
 
-# Plugin loader also searches LD_LIBRARY_PATH — belt and braces.
-ENV LD_LIBRARY_PATH=/opt/llama
-
 # Copy GGUF model weights
 COPY --from=model-setup /models /app/models
 
-# Install Python dependencies (no llama-cpp-python — not needed)
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-cache
+# Copy compiled Python virtual environment
+COPY --from=python-builder /app/.venv /app/.venv
 
 # Copy application source
 COPY app/ ./app/
@@ -108,7 +113,7 @@ ENV LOCAL_SERVER_URL=http://localhost:8080/v1
 ENV SUPRA_ROUTER_ENABLED=true
 ENV SUPRA_ROUTER_URL=http://localhost:8081
 
-# ── Entrypoint: start both llama-server instances, wait until healthy, then run agent ─
+# ── Entrypoint: start Supra-Router llama-server, wait until healthy, then run agent ─
 RUN printf '#!/bin/sh\n\
 echo "[startup] Launching Supra-Router llama-server (port 8081)..."\n\
 llama-server \\\n\
@@ -121,31 +126,6 @@ llama-server \\\n\
   --reasoning off \\\n\
   > /app/supra_router_server.log 2>&1 &\n\
 SUPRA_PID=$!\n\
-\n\
-echo "[startup] Launching Qwen2.5-Coder-7B-Instruct llama-server (port 8080)..."\n\
-llama-server \\\n\
-  -m models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf \\\n\
-  --port 8080 --host 0.0.0.0 \\\n\
-  -c 8192 \\\n\
-  -b 1024 --ubatch-size 256 \\\n\
-  -np 2 \\\n\
-  --reasoning off \\\n\
-  > /app/llama_server.log 2>&1 &\n\
-LLAMA_PID=$!\n\
-\n\
-# Watchdog: auto-restart llama-server if it crashes\n\
-(sleep 30; while kill -0 $LLAMA_PID 2>/dev/null; do sleep 5; done; \\\n\
-  echo "[watchdog] llama-server died, restarting..."; \\\n\
-  llama-server \\\n\
-  -m models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf \\\n\
-    --port 8080 --host 0.0.0.0 \\\n\
-    -c 8192 \\\n\
-    -b 1024 --ubatch-size 256 \\\n\
-    -np 1 \\\n\
-    --reasoning off \\\n\
-    > /app/llama_server.log 2>&1 & \\\n\
-  LLAMA_PID=$!; \\\n\
-  echo "[watchdog] restarted with PID $LLAMA_PID") &\n\
 \n\
 echo "[startup] Waiting for Supra-Router to be ready (up to 30s)..."\n\
 READY=0\n\
@@ -168,33 +148,10 @@ if [ "$READY" = "0" ]; then\n\
     echo "[startup] WARNING: Supra-Router not ready, continuing without ML routing"\n\
 fi\n\
 \n\
-echo "[startup] Waiting for Qwen2.5-Coder-7B-Instruct to be ready (up to 60s)..."\n\
-READY=0\n\
-for i in $(seq 1 60); do\n\
-    if ! kill -0 $LLAMA_PID > /dev/null 2>&1; then\n\
-        echo "[startup] ERROR: Qwen2.5-Coder-7B-Instruct process exited unexpectedly!"\n\
-        echo "[startup] --- llama-server logs ---"\n\
-        cat /app/llama_server.log\n\
-        exit 1\n\
-    fi\n\
-    if curl -sf http://localhost:8080/health > /dev/null 2>&1; then\n\
-        echo "[startup] main llama-server ready after ${i}x2s"\n\
-        READY=1\n\
-        break\n\
-    fi\n\
-    sleep 2\n\
-done\n\
-\n\
-if [ "$READY" = "0" ]; then\n\
-    echo "[startup] ERROR: Qwen2.5-Coder-7B-Instruct did not respond within 120s"\n\
-    echo "[startup] --- llama-server logs ---"\n\
-    cat /app/llama_server.log\n\
-    exit 1\n\
-fi\n\
-\n\
 echo "[startup] Starting evaluation agent..."\n\
 exec /app/.venv/bin/python agent.py\n\
 ' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+
 
 EXPOSE 8000 8080 8081
 
