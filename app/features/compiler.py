@@ -108,7 +108,7 @@ class InferencePolicyCompiler:
             category="task",
             priority=80,
             condition=lambda t, res, risk, m: t.get("math", 0.0) > 0.5,
-            instruction="Compute carefully and step-by-step. Double-check all calculations, especially numerical iterations like Newton's method, to ensure convergence to the correct root. Return concise working and the final answer clearly."
+            instruction="Compute carefully and step-by-step. Convert fractions to decimals first. Double-check all arithmetic operations. If a non-linear or cubic equation (e.g., 12x^3 - 6x^2 + 7 = 0) needs to be solved, you MUST perform at least 2 steps of a numerical approximation method (like Newton's method starting from a sensible guess like x0 = -0.7) to find the actual real root as a decimal value. Do not say 'assume we found the root' — you must calculate it."
         )
         self._registry.register(
             name="task:code",
@@ -122,7 +122,7 @@ class InferencePolicyCompiler:
             category="task",
             priority=70,
             condition=lambda t, res, risk, m: t.get("reasoning", 0.0) > 0.6,
-            instruction="Solve step by step internally. Actively analyze all clues for logical consistency, detecting and highlighting any logical contradictions in the provided statements. Return only the final explanation in a maximum of 4 short bullet points or sentences."
+            instruction="Solve the logic puzzle step by step. Identify the friends, their attributes, and the rules. State the final assignments directly and clearly. Maximum 3 short sentences or bullet points."
         )
         self._registry.register(
             name="task:counting",
