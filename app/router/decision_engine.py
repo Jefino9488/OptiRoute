@@ -19,6 +19,7 @@ from typing import Any
 
 import structlog
 
+from app.config import get_settings
 from app.router.capability_matrix import CapabilityMatrix
 
 logger = structlog.get_logger(__name__)
@@ -102,22 +103,37 @@ class DecisionEngine:
         -------
         RoutingDecision
         """
-        # Step 1: Identify dominant task type and filter out failure models
         dominant_task = self._get_dominant_task(task_vector)
-        failure_models = self._matrix.get_failure_models(dominant_task)
         all_models = self._matrix.get_all_models()
-        candidates = [m for m in all_models if m not in failure_models]
+        allowed_models = set(get_settings().allowed_models.keys())
+        
+        candidates = [m for m in all_models if m in allowed_models or m.startswith("local:")]
 
         logger.info(
             "decision_engine.filtering",
             dominant_task=dominant_task,
-            excluded=failure_models,
             candidates=candidates,
         )
 
+        # Step 1: Filter out models that are known to fail on the dominant task
+        filtered_candidates: list[str] = []
+        for model_id in candidates:
+            entry = self._matrix.get_model_capabilities(model_id)
+            if entry is None:
+                continue
+            fails_on: list[str] = entry.get("fails_on", [])
+            if dominant_task in fails_on:
+                logger.info(
+                    "decision_engine.skipped_fails_on",
+                    model=model_id,
+                    dominant_task=dominant_task,
+                )
+                continue
+            filtered_candidates.append(model_id)
+
         # Step 2 + 3: Compute weighted accuracy and filter by threshold
         eligible: list[dict[str, Any]] = []
-        for model_id in candidates:
+        for model_id in filtered_candidates:
             entry = self._matrix.get_model_capabilities(model_id)
             if entry is None:
                 continue
@@ -165,7 +181,6 @@ class DecisionEngine:
                 winner=winner,
                 dominant_task=dominant_task,
                 required_accuracy=required_accuracy,
-                excluded=failure_models,
                 alternatives=alternatives,
             )
             decision = RoutingDecision(
@@ -251,7 +266,6 @@ class DecisionEngine:
         winner: dict[str, Any],
         dominant_task: str,
         required_accuracy: float,
-        excluded: list[str],
         alternatives: list[dict[str, Any]],
     ) -> str:
         """Build a human-readable routing explanation string."""
@@ -261,10 +275,6 @@ class DecisionEngine:
             f"({winner.get('predicted_accuracy', 0):.2f} >= {required_accuracy:.2f}) "
             f"at lowest cost (${winner.get('estimated_cost', 0):.8f}).",
         ]
-        if excluded:
-            parts.append(
-                f"Excluded {', '.join(excluded)} (fails_on includes {dominant_task})."
-            )
         if alternatives:
             alt_strs = [
                 f"{a['model']} (${a['cost']:.8f})" for a in alternatives[:3]

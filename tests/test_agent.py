@@ -23,8 +23,10 @@ import pytest
 
 def _make_route_result(
     answer: str = "Test answer",
-    model: str = "local:qwen-2.5-3b",
+    model: str = "local:qwen2.5-coder-7b",
     cost: float = 0.0,
+    tokens_in: int = 10,
+    tokens_out: int = 20,
 ) -> dict:
     return {
         "response": answer,
@@ -37,6 +39,8 @@ def _make_route_result(
         "escalation_depth": 0,
         "task_vector": {},
         "routing_explanation": "mocked",
+        "tokens_input": tokens_in,
+        "tokens_output": tokens_out,
     }
 
 
@@ -44,6 +48,7 @@ def _make_pipeline_mock(answer: str = "Test answer") -> MagicMock:
     """Return a mock RoutingPipeline whose route() is an async no-op."""
     mock = MagicMock()
     mock.route = AsyncMock(return_value=_make_route_result(answer=answer))
+    mock.cache.stats = {"hits": 0, "misses": 0, "hit_rate": 0.0}
     return mock
 
 
@@ -178,6 +183,7 @@ async def test_agent_recovers_from_single_task_error(tmp_path):
 
     mock_pipeline = MagicMock()
     mock_pipeline.route = AsyncMock(side_effect=side_effect)
+    mock_pipeline.cache.stats = {"hits": 0, "misses": 0, "hit_rate": 0.0}
 
     await _run_agent(input_file, output_file, mock_pipeline)
 

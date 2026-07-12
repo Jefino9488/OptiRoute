@@ -1,0 +1,71 @@
+{
+  "routing_distribution": {
+    "local:qwen2.5-coder-7b": "57.1%",
+    "minimax-m3": "42.0%",
+    "kimi-k2p7-code": "0.9%"
+  },
+  "escalations": {
+    "escalated_to_minimax-m3": 5,
+    "escalated_to_kimi-k2p7-code": 1
+  },
+  "average_cost_per_category": {
+    "code": "$0.000000",
+    "creative": "$0.000440",
+    "extraction": "$0.000214",
+    "general_qa": "$0.000131",
+    "math": "$0.000181",
+    "reasoning": "$0.001048",
+    "retrieval": "$0.000014",
+    "translation": "$0.000167"
+  },
+  "accuracy_by_category": {
+    "code": {
+      "local_success_rate": "0.0%",
+      "remote_success_rate": "0.0%",
+      "escalation_rate": "30.0%",
+      "total_routed": 20
+    },
+    "creative": {
+      "local_success_rate": "66.7%",
+      "remote_success_rate": "100.0%",
+      "escalation_rate": "42.9%",
+      "total_routed": 14
+    },
+    "extraction": {
+      "local_success_rate": "66.7%",
+      "remote_success_rate": "40.0%",
+      "escalation_rate": "75.0%",
+      "total_routed": 8
+    },
+    "general_qa": {
+      "local_success_rate": "76.9%",
+      "remote_success_rate": "50.0%",
+      "escalation_rate": "40.0%",
+      "total_routed": 15
+    },
+    "math": {
+      "local_success_rate": "61.5%",
+      "remote_success_rate": "100.0%",
+      "escalation_rate": "30.0%",
+      "total_routed": 20
+    },
+    "reasoning": {
+      "local_success_rate": "100.0%",
+      "remote_success_rate": "100.0%",
+      "escalation_rate": "33.3%",
+      "total_routed": 18
+    },
+    "retrieval": {
+      "local_success_rate": "100.0%",
+      "remote_success_rate": "100.0%",
+      "escalation_rate": "120.0%",
+      "total_routed": 5
+    },
+    "translation": {
+      "local_success_rate": "0.0%",
+      "remote_success_rate": "8.3%",
+      "escalation_rate": "50.0%",
+      "total_routed": 12
+    }
+  }
+}

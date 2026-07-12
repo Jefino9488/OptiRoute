@@ -89,7 +89,7 @@ class CapabilityMatrix:
         Returns
         -------
         dict | None
-            Model entry including capabilities, costs, fails_on, etc.
+            Model entry including capabilities, costs, samples, etc.
         """
         entry = self._data.get(model_id)
         if entry is None:
@@ -100,24 +100,20 @@ class CapabilityMatrix:
         """Return a list of all model IDs in the matrix."""
         return list(self._data.keys())
 
-    def get_failure_models(self, task_type: str) -> list[str]:
-        """Return model IDs whose ``fails_on`` list includes *task_type*.
+    def supports_thinking(self, model_id: str) -> bool:
+        """Check if a model supports Fireworks reasoning_effort parameter."""
+        entry = self._data.get(model_id)
+        if entry is None:
+            return False
+        return entry.get("supports_thinking", False)
 
-        Parameters
-        ----------
-        task_type : str
-            A task dimension name (e.g. ``"creative"``).
+    def get_thinking_cost_multiplier(self, model_id: str) -> float:
+        """Return the cost multiplier when thinking is enabled for a model."""
+        entry = self._data.get(model_id)
+        if entry is None:
+            return 1.0
+        return entry.get("thinking_cost_multiplier", 1.0)
 
-        Returns
-        -------
-        list[str]
-            Model IDs known to fail on the given task type.
-        """
-        return [
-            model_id
-            for model_id, entry in self._data.items()
-            if task_type in entry.get("fails_on", [])
-        ]
 
     def get_capable_models(
         self,
@@ -159,6 +155,8 @@ class CapabilityMatrix:
                         "cost_per_1k_input": entry["cost_per_1k_input"],
                         "cost_per_1k_output": entry["cost_per_1k_output"],
                         "avg_output_multiplier": entry.get("avg_output_multiplier", 1.0),
+                        "supports_thinking": entry.get("supports_thinking", False),
+                        "thinking_cost_multiplier": entry.get("thinking_cost_multiplier", 1.0),
                     }
                 )
         return results
@@ -171,11 +169,11 @@ class CapabilityMatrix:
         self,
         model_id: str,
         capabilities: dict[str, float],
-        fails_on: list[str],
+        samples: dict[str, int],
     ) -> None:
         """Update (or create) a model entry with new capability scores.
 
-        Only the ``capabilities`` and ``fails_on`` fields are overwritten; cost
+        Only the ``capabilities`` and ``samples`` fields are overwritten; cost
         and context fields are preserved if the model already exists.
 
         Parameters
@@ -184,18 +182,18 @@ class CapabilityMatrix:
             Short model identifier.
         capabilities : dict[str, float]
             Per-dimension accuracy scores.
-        fails_on : list[str]
-            Task dimensions where the model is known to fail.
+        samples : dict[str, int]
+            Number of benchmark samples per dimension.
         """
         existing = self._data.get(model_id, {})
         existing["capabilities"] = capabilities
-        existing["fails_on"] = fails_on
+        existing["samples"] = samples
         self._data[model_id] = existing
         logger.info(
             "capability_matrix.model_updated",
             model_id=model_id,
             dims=list(capabilities.keys()),
-            fails_on=fails_on,
+            samples=samples,
         )
 
     # ------------------------------------------------------------------
@@ -207,14 +205,17 @@ class CapabilityMatrix:
         model_id: str,
         input_tokens: int,
         output_tokens: int,
+        thinking_enabled: bool = False,
     ) -> float | None:
         """Estimate inference cost in USD for the given token counts.
 
         The formula accounts for Kimi's mandatory thinking overhead via
-        ``avg_output_multiplier``::
+        ``avg_output_multiplier`` and optional thinking cost via
+        ``thinking_cost_multiplier``::
 
             cost = input_tokens * cost_per_1k_input / 1000
                  + output_tokens * avg_output_multiplier * cost_per_1k_output / 1000
+                 * (thinking_cost_multiplier if thinking_enabled else 1.0)
 
         Parameters
         ----------
@@ -224,6 +225,8 @@ class CapabilityMatrix:
             Estimated number of input tokens.
         output_tokens : int
             Estimated number of output tokens (before multiplier).
+        thinking_enabled : bool
+            Whether thinking/reasoning is enabled for this request.
 
         Returns
         -------
@@ -239,9 +242,10 @@ class CapabilityMatrix:
             return None
 
         multiplier = entry.get("avg_output_multiplier", 1.0)
+        thinking_mult = entry.get("thinking_cost_multiplier", 1.0) if thinking_enabled else 1.0
         cost = (
             input_tokens * entry["cost_per_1k_input"] / 1000
-            + output_tokens * multiplier * entry["cost_per_1k_output"] / 1000
+            + output_tokens * multiplier * thinking_mult * entry["cost_per_1k_output"] / 1000
         )
         return cost
 

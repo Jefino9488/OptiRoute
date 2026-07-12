@@ -1,13 +1,9 @@
 """Prompt preprocessor — runs before Fireworks execution only.
 
 Three responsibilities:
-1. Token compression: use the local model to concisely rewrite long prompts
-   before forwarding to Fireworks (saves input tokens).
-2. Anti-hallucination guards: inject protective system prompt lines when
+1. Anti-hallucination guards: inject protective system prompt lines when
    false-memory, stale-knowledge, or prompt-injection patterns are detected.
-3. Injection stripping: remove known injection clauses from the forwarded prompt.
-
-The local model is NEVER preprocessed — it always receives the original prompt.
+2. Injection stripping: remove known injection clauses from the forwarded prompt.
 """
 
 from __future__ import annotations
@@ -105,9 +101,6 @@ class PreprocessedPrompt:
     risk_flags: set[str] = field(default_factory=set)
     """Detected risk categories: 'false_memory', 'stale_knowledge', 'injection'."""
 
-    token_savings: int = 0
-    """Estimated input tokens saved by compression (rough: words × 1.3)."""
-
 
 # ---------------------------------------------------------------------------
 # Preprocessor
@@ -117,25 +110,16 @@ class PreprocessedPrompt:
 class PromptPreprocessor:
     """Stateless prompt preprocessor — runs before every Fireworks execution.
 
-    Designed to be fast: regex checks are O(n) in prompt length, and the
-    optional local-model compression is the only async operation.
-
-    Local model execution is never preprocessed (it receives the original).
+    Designed to be fast: regex checks are O(n) in prompt length.
     """
 
-    async def process(
-        self,
-        prompt: str,
-        local_executor: object | None = None,
-    ) -> PreprocessedPrompt:
+    async def process(self, prompt: str) -> PreprocessedPrompt:
         """Preprocess *prompt* before forwarding to Fireworks.
 
         Parameters
         ----------
         prompt : str
             The original user prompt.
-        local_executor : LocalExecutor | None
-            If provided and available, used for token compression on long prompts.
 
         Returns
         -------
@@ -170,42 +154,9 @@ class PromptPreprocessor:
             system_addons.append(_SYSTEM_ADDON_STALE_KNOWLEDGE)
             logger.info("preprocessor.stale_knowledge_detected")
 
-        # --- 4. Token compression via local model (long prompts only) ---
-        original_words = len(forwarded.split())
-        token_savings = 0
-
-        if (
-            local_executor is not None
-            and getattr(local_executor, "is_available", False)
-            and original_words >= _COMPRESS_MIN_WORDS
-        ):
-            try:
-                compressed_result = await local_executor.execute(
-                    prompt=forwarded,
-                    system_prompt=_COMPRESS_SYSTEM,
-                    max_tokens=200,
-                )
-                compressed = compressed_result.response.strip()
-                # Only use the compressed version if it's meaningfully shorter
-                # and not empty or suspiciously short (< 5 words)
-                compressed_words = len(compressed.split())
-                if compressed_words >= 5 and compressed_words < original_words * 0.85:
-                    token_savings = max(0, int((original_words - compressed_words) * 1.3))
-                    forwarded = compressed
-                    logger.info(
-                        "preprocessor.compressed",
-                        original_words=original_words,
-                        compressed_words=compressed_words,
-                        token_savings=token_savings,
-                    )
-            except Exception as exc:
-                # Compression is best-effort — never block the request
-                logger.warning("preprocessor.compression_failed", error=str(exc))
-
         return PreprocessedPrompt(
             original=prompt,
             forwarded=forwarded,
             system_addons=system_addons,
             risk_flags=risk_flags,
-            token_savings=token_savings,
         )

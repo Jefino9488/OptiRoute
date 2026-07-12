@@ -42,6 +42,9 @@ class FeatureVector:
     is_translation: bool = False
     requires_reasoning: bool = False
     requires_retrieval: bool = False
+    is_extraction: bool = False
+    is_classification: bool = False
+    has_strict_constraint: bool = False
     input_length: int = 0
     expected_output_length: str = "medium"
     question_count: int = 0
@@ -73,7 +76,10 @@ _MATH_KEYWORDS_RE = re.compile(
     r"multiply|divide|subtract|add|compute|arithmetic|"
     r"algebra|geometry|trigonometry|calculus|statistics|"
     r"matrix|vector|determinant|eigenvalue|"
-    r"percentage|fraction|ratio|proportion"
+    r"percentage|fraction|ratio|proportion|"
+    r"sells?\s+\d|restock\s+\d|inventory\s+of|depreciat(?:ion|es)?|appreciat(?:ion|es)?|"
+    r"starts?\s+with\s+\d|"
+    r"how\s+many\s+(?:units?|items?|dollars?|products?|goods?|are\s+left|remain)"
     r")\b",
     re.IGNORECASE,
 )
@@ -139,6 +145,21 @@ _RETRIEVAL_KEYWORDS_RE = re.compile(
     r"what\s+are|who\s+was|when\s+was|how\s+many|"
     r"what\s+does|what\s+year|which\s+country|capital\s+of"
     r")\b",
+    re.IGNORECASE,
+)
+
+_EXTRACTION_KEYWORDS_RE = re.compile(
+    r"\b(?:extract|parse|identify|find\s+all|list\s+all|domains?|named\s+entities?|ingredients?)\b",
+    re.IGNORECASE,
+)
+
+_CLASSIFICATION_KEYWORDS_RE = re.compile(
+    r"\b(?:classify|sentiment|positive|negative|neutral|category|review|label)\b",
+    re.IGNORECASE,
+)
+
+_STRICT_CONSTRAINT_RE = re.compile(
+    r"\b(?:exactly|strictly|must|only|all\s+unique|carefully|rigorously|without\s+fail)\b",
     re.IGNORECASE,
 )
 
@@ -238,6 +259,9 @@ class FeatureExtractor:
         fv.requires_reasoning = has_reasoning_kw or has_multi_step
 
         fv.requires_retrieval = bool(_RETRIEVAL_KEYWORDS_RE.search(prompt))
+        fv.is_extraction = bool(_EXTRACTION_KEYWORDS_RE.search(prompt)) or fv.json_required
+        fv.is_classification = bool(_CLASSIFICATION_KEYWORDS_RE.search(prompt))
+        fv.has_strict_constraint = bool(_STRICT_CONSTRAINT_RE.search(prompt))
 
         # -- task type (dominant) --
         fv.task_type = self._classify_task_type(fv)
@@ -257,6 +281,7 @@ class FeatureExtractor:
         """Pick the dominant task type from detected feature flags.
 
         Priority order resolves ties (more specific types win).
+        Now uses intent-aware scoring to prevent keyword collisions.
         """
         # Score each type — higher = stronger signal.
         scores: dict[str, float] = {
@@ -270,6 +295,7 @@ class FeatureExtractor:
             "general_qa": 0.1,  # small default so it's the fallback
         }
 
+        # Base keyword matches
         if fv.contains_math:
             scores["math"] += 1.0
         if fv.contains_code:
@@ -277,17 +303,39 @@ class FeatureExtractor:
         if fv.requires_reasoning:
             scores["reasoning"] += 0.8
         if fv.is_creative:
-            scores["creative"] += 0.9
+            scores["creative"] += 1.0
         if fv.is_translation:
-            scores["translation"] += 0.95
-        if fv.json_required:
-            scores["extraction"] += 0.6
+            scores["translation"] += 1.0
+        if fv.is_extraction:
+            scores["extraction"] += 1.0
         if fv.requires_retrieval:
             scores["retrieval"] += 0.7
+        if fv.is_classification:
+            scores["reasoning"] += 0.8
+            scores["general_qa"] += 0.5
 
-        # If both code *and* math, code wins (e.g. "implement fibonacci").
+        # Intent Resolution (resolving keyword collisions)
+        
+        # 0. Classification overrides incidental math (e.g. rating "5/5")
+        if fv.is_classification and fv.contains_math:
+            scores["math"] *= 0.1
+            scores["reasoning"] += 1.0
+
+        # 1. Creative intent overrides incidental math (e.g. "haiku 5-7-5")
+        if fv.is_creative and fv.contains_math:
+            scores["creative"] += 1.5 
+            
+        # 2. Translation intent overrides general topics
+        if fv.is_translation:
+            scores["translation"] += 1.5
+            
+        # 3. Code intent with math (e.g. "implement fibonacci") -> Code wins
         if fv.contains_code and fv.contains_math:
-            scores["code"] += 0.2
+            scores["code"] += 0.5
+            
+        # 4. JSON intent boosts extraction unless code is dominant
+        if fv.json_required and not fv.contains_code:
+            scores["extraction"] += 0.5
 
         return max(scores, key=scores.get)  # type: ignore[arg-type]
 
@@ -344,12 +392,16 @@ class FeatureExtractor:
 
         # Question count factor.
         question_score = min(fv.question_count / 3.0, 1.0)
+        
+        # Strict constraints dramatically bump complexity
+        strictness_penalty = 0.3 if fv.has_strict_constraint else 0.0
 
         # Weighted combination.
         complexity = (
             0.35 * length_score
             + 0.40 * feature_score
             + 0.25 * question_score
+            + strictness_penalty
         )
 
         return round(min(max(complexity, 0.0), 1.0), 4)

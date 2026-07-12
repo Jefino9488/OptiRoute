@@ -46,11 +46,11 @@ class ResourceVector:
     """Estimated resource requirements for executing the task."""
 
     expected_input_tokens: float = 0.0
-    expected_output_tokens: float = 0.0
+    output_budget_bucket: str = "Medium"
     expected_context_length: float = 0.0
     complexity: float = 0.0
 
-    def to_dict(self) -> dict[str, float]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict."""
         return asdict(self)
 
@@ -133,7 +133,7 @@ class TaskVectorGenerator:
         # Base values: dominant high, related moderate, others low.
         high = 0.7 + 0.25 * complexity   # 0.70 – 0.95
         moderate = 0.25 + 0.20 * complexity  # 0.25 – 0.45
-        low = 0.05
+        low = 0.0
 
         values: dict[str, float] = {}
         related_dims = _RELATED.get(dominant, [])
@@ -170,22 +170,50 @@ class TaskVectorGenerator:
 
     @staticmethod
     def _build_resource_vector(features: FeatureVector) -> ResourceVector:
-        """Estimate token / context requirements."""
+        """Estimate token / context requirements and calculate output budget."""
         input_tokens = features.input_length * 1.3
-        base_output = _OUTPUT_TOKENS.get(features.expected_output_length, 200.0)
+        
+        _OUTPUT_TOKENS = {
+            "short": 50.0,
+            "medium": 300.0,
+            "long": 800.0,
+        }
+        
+        base_output = _OUTPUT_TOKENS.get(features.expected_output_length, 300.0)
 
-        # Code and creative tasks typically produce longer outputs.
-        if features.contains_code:
-            base_output *= 1.5
+        # Format and Intent modifiers
         if features.is_creative:
-            base_output *= 1.3
+            base_output *= 1.5  # Essays/Stories need length
+        if features.contains_code:
+            base_output *= 1.4  # Code needs structure and comments
+        if features.task_type == "math":
+            base_output *= (1.0 + features.complexity)  # Complex math is step-by-step
+        if features.json_required:
+            base_output *= 1.2  # JSON formatting overhead
+        
+        # Complexity broadly scales the budget
+        base_output *= (0.8 + features.complexity * 0.4)
 
-        context_length = input_tokens + base_output
+        # Hard clamp limits to prevent pathological prompts from runaway cost
+        raw_output_tokens = min(max(base_output, 50), 2048)
+        
+        if raw_output_tokens <= 256:
+            budget_bucket = "Small"
+            expected_context = input_tokens + 256
+        elif raw_output_tokens <= 512:
+            budget_bucket = "Medium"
+            expected_context = input_tokens + 512
+        elif raw_output_tokens <= 1024:
+            budget_bucket = "Large"
+            expected_context = input_tokens + 1024
+        else:
+            budget_bucket = "Very_Large"
+            expected_context = input_tokens + 2048
 
         return ResourceVector(
             expected_input_tokens=round(input_tokens, 1),
-            expected_output_tokens=round(base_output, 1),
-            expected_context_length=round(context_length, 1),
+            output_budget_bucket=budget_bucket,
+            expected_context_length=round(expected_context, 1),
             complexity=features.complexity,
         )
 
@@ -194,6 +222,6 @@ class TaskVectorGenerator:
         """Derive boolean risk flags from feature booleans."""
         return RiskVector(
             needs_json=features.json_required,
-            needs_high_accuracy=features.contains_code or features.contains_math,
-            strict_formatting=features.json_required,
+            needs_high_accuracy=features.contains_code or features.contains_math or features.has_strict_constraint,
+            strict_formatting=features.json_required or features.has_strict_constraint,
         )

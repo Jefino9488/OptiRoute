@@ -68,6 +68,9 @@ class BenchmarkRunner:
             n_threads=settings.local_model_threads,
         )
         self._local_loaded = False
+        
+        from app.router.capability_matrix import CapabilityMatrix
+        self._matrix = CapabilityMatrix(settings.capability_matrix_path)
 
     def load_dataset(self, category: str) -> list[BenchmarkPrompt]:
         """Load a benchmark dataset by category name.
@@ -155,11 +158,28 @@ class BenchmarkRunner:
                     task_type=bp.category,
                 )
             else:
+                # Enable thinking for models that support it on reasoning-heavy tasks
+                reasoning_effort = None
+                if self._matrix.supports_thinking(model_id):
+                    # Categories that benefit from thinking
+                    _THINKING_CATEGORIES = {"reasoning", "math", "code"}
+                    if bp.category in _THINKING_CATEGORIES:
+                        reasoning_effort = "high"
+                    else:
+                        reasoning_effort = "none"
+
                 exec_result = await self._fireworks_executor.execute(
                     prompt=bp.prompt,
                     model_id=model_id,
                     task_type=bp.category,
+                    reasoning_effort=reasoning_effort,
                 )
+                exec_result.cost = self._matrix.estimate_cost(
+                    model_id, 
+                    exec_result.tokens_input, 
+                    exec_result.tokens_output,
+                    thinking_enabled=(reasoning_effort is not None and reasoning_effort != "none"),
+                ) or 0.0
             results.append(BenchmarkResult(
                 prompt=bp.prompt,
                 expected_output=bp.expected_output,
@@ -190,8 +210,17 @@ class BenchmarkRunner:
             Mapping of model_id → results.
         """
         settings = get_settings()
-        all_results: dict[str, list[BenchmarkResult]] = {}
+
+        # Local model first → validates llama-server is up before spending API tokens
+        models_to_test: list[str] = []
+        if settings.local_model_enabled:
+            models_to_test.append(settings.local_model_name)
         for model_id in settings.allowed_models:
+            if not model_id.startswith("local:"):
+                models_to_test.append(model_id)
+
+        all_results: dict[str, list[BenchmarkResult]] = {}
+        for model_id in models_to_test:
             logger.info("benchmark.model_start", model=model_id)
             results = await self.run_model(model_id, prompts)
             all_results[model_id] = results

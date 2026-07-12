@@ -35,6 +35,14 @@ class RouteRequest(BaseModel):
         default=None,
         description="Force routing to a specific model (bypasses decision engine)",
     )
+    enable_thinking: bool | None = Field(
+        default=None,
+        description=(
+            "Enable extended reasoning/thinking for complex tasks. "
+            "None = auto-detect based on task complexity, "
+            "True = force thinking ON, False = force thinking OFF"
+        ),
+    )
     metadata: dict | None = Field(
         default=None,
         description="Optional metadata attached to the request",
@@ -129,6 +137,8 @@ class RoutingDecision(BaseModel):
 class RouteResponse(BaseModel):
     """Full response returned to the client after routing + execution."""
 
+    model_config = {"extra": "ignore"}
+
     response: str = Field(
         ...,
         description="The model-generated response text",
@@ -216,7 +226,18 @@ class ModelInfo(BaseModel):
         ge=0,
         description="Maximum context window in tokens",
     )
+    avg_output_multiplier: float = Field(
+        1.0, description="Average output token multiplier vs input."
+    )
     fails_on: list[str] = Field(
         default_factory=list,
-        description="Task categories this model is known to fail on",
+        description="Task types this model is known to fail on",
+    )
+    supports_thinking: bool = Field(
+        default=False,
+        description="Whether this model supports Fireworks reasoning_effort parameter",
+    )
+    samples: dict[str, int] = Field(
+        default_factory=dict,
+        description="Optional tracking of how many samples were tested per task type.",
     )

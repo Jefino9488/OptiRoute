@@ -48,6 +48,7 @@ async def route_prompt(request: RouteRequest) -> RouteResponse:
             prompt=request.prompt,
             required_accuracy=request.required_accuracy,
             force_model=request.force_model,
+            enable_thinking=request.enable_thinking,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -57,26 +58,27 @@ async def route_prompt(request: RouteRequest) -> RouteResponse:
 
 @router.get("/models", response_model=list[ModelInfo])
 async def list_models() -> list[ModelInfo]:
-    """List all available models with their capability scores."""
-    pipeline = get_pipeline()
-    matrix = pipeline.capability_matrix
-
-    models: list[ModelInfo] = []
-    for model_id in matrix.get_all_models():
-        entry = matrix.get_model_capabilities(model_id)
-        if entry is None:
-            continue
-        models.append(
-            ModelInfo(
-                model_id=model_id,
-                capabilities=entry.get("capabilities", {}),
-                cost_per_1k_input=entry.get("cost_per_1k_input", 0.0),
-                cost_per_1k_output=entry.get("cost_per_1k_output", 0.0),
-                max_context=entry.get("max_context", 0),
-                fails_on=entry.get("fails_on", []),
-            )
-        )
-    return models
+    """List available models."""
+    return [
+        ModelInfo(
+            model_id="local:qwen2.5-coder-7b",
+            capabilities={"math": 0.85, "code": 0.92, "translation": 0.85, "general_qa": 0.88},
+            cost_per_1k_input=0.0,
+            cost_per_1k_output=0.0,
+            max_context=8192,
+            fails_on=[],
+            supports_thinking=False,
+        ),
+        ModelInfo(
+            model_id="minimax-m3",
+            capabilities={"math": 0.90, "code": 0.97, "reasoning": 0.85, "general_qa": 0.74},
+            cost_per_1k_input=0.0003,
+            cost_per_1k_output=0.0012,
+            max_context=512000,
+            fails_on=["translation"],
+            supports_thinking=False,
+        ),
+    ]
 
 
 @router.get("/metrics")

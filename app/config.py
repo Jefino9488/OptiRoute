@@ -60,7 +60,7 @@ class Settings(BaseSettings):
         description="Maximum number of escalation retries",
     )
     confidence_threshold: float = Field(
-        default=0.7,
+        default=0.8,
         ge=0.0,
         le=1.0,
         description="Minimum confidence score before escalation is triggered",
@@ -78,32 +78,46 @@ class Settings(BaseSettings):
         description="Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
 
-    # --- Local Model ---
+    # --- Local Model (llama-server HTTP API) ---
     local_model_enabled: bool = Field(
         default=True,
         description="Enable local model inference for $0 Fireworks token cost",
     )
     local_model_path: str = Field(
-        default="models/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
-        description="Path to GGUF model weights file (Qwen2.5-3B-Instruct Q4_K_M)",
+        default="models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+        description="Path to GGUF model weights file served by llama-server",
     )
     local_model_name: str = Field(
-        default="local:qwen-2.5-3b",
-        description="Local model identifier in the capability matrix",
+        default="local:qwen2.5-coder-7b",
+        description="Local model identifier",
     )
     local_model_context_length: int = Field(
-        default=4096,
+        default=8192,
         ge=256,
         description="Max context window for local model (tokens)",
     )
     local_model_threads: int = Field(
         default=2,
         ge=1,
-        description="CPU threads for local model inference (match harness vCPU count)",
+        description="CPU threads for llama-server (match harness vCPU count)",
     )
     local_router_enabled: bool = Field(
+        default=False,
+        description="Use local LLM for routing decisions — disabled, heuristic engine used instead",
+    )
+    local_server_url: str = Field(
+        default="http://localhost:8080/v1",
+        description="Base URL of the llama-server HTTP API (OpenAI-compatible)",
+    )
+
+    # --- Supra-Router-51M (ML-based routing) ---
+    supra_router_enabled: bool = Field(
         default=True,
-        description="Use local LLM to make routing decisions (not just execution)",
+        description="Enable Supra-Router-51M for ML-based prompt classification",
+    )
+    supra_router_url: str = Field(
+        default="http://localhost:8081",
+        description="Base URL of the Supra-Router llama-server instance",
     )
 
     model_config = {

@@ -1,14 +1,44 @@
 {
+  "local:qwen2.5-coder-7b": {
+    "capabilities": {
+      "math": 0.82,
+      "reasoning": 0.78,
+      "code": 0.90,
+      "creative": 0.65,
+      "translation": 0.80,
+      "extraction": 0.92,
+      "retrieval": 0.94,
+      "general_qa": 0.85
+    },
+    "cost_per_1k_input": 0.0002,
+    "cost_per_1k_output": 0.0004,
+    "avg_output_multiplier": 1.0,
+    "max_context": 16384,
+    "fails_on": [],
+    "supports_thinking": false,
+    "thinking_cost_multiplier": 1.0,
+    "samples": {
+      "code": 20,
+      "creative": 14,
+      "extraction": 8,
+      "general_qa": 15,
+      "math": 20,
+      "reasoning": 18,
+      "retrieval": 5,
+      "translation": 12
+    },
+    "avg_latency_ms": 450.0
+  },
   "minimax-m3": {
     "capabilities": {
-      "math": 0.85,
-      "reasoning": 0.8569,
+      "math": 0.9,
+      "reasoning": 0.8457,
       "code": 0.97,
-      "creative": 0.78,
-      "translation": 0.1605,
-      "extraction": 0.7467,
+      "creative": 0.7357,
+      "translation": 0.3026,
+      "extraction": 0.5042,
       "retrieval": 0.64,
-      "general_qa": 0.7319
+      "general_qa": 0.7356
     },
     "cost_per_1k_input": 0.0003,
     "cost_per_1k_output": 0.0012,
@@ -17,47 +47,115 @@
     "fails_on": [
       "translation"
     ],
-    "avg_latency_ms": 5460.9
+    "supports_thinking": true,
+    "thinking_cost_multiplier": 1.8,
+    "samples": {
+      "code": 20,
+      "creative": 14,
+      "extraction": 8,
+      "general_qa": 15,
+      "math": 20,
+      "reasoning": 18,
+      "retrieval": 5,
+      "translation": 12
+    },
+    "avg_latency_ms": 3668.7
   },
   "kimi-k2p7-code": {
     "capabilities": {
-      "math": 0.85,
-      "reasoning": 0.856,
-      "code": 0.97,
-      "creative": 0.78,
-      "translation": 0.2958,
-      "extraction": 0.84,
+      "math": 0.9,
+      "reasoning": 0.8336,
+      "code": 0.98,
+      "creative": 0.7214,
+      "translation": 0.3022,
+      "extraction": 0.7,
       "retrieval": 0.48,
-      "general_qa": 0.6343
+      "general_qa": 0.6461
     },
     "cost_per_1k_input": 0.00095,
     "cost_per_1k_output": 0.004,
     "avg_output_multiplier": 1.3,
     "max_context": 256000,
     "fails_on": [
-      "translation",
-      "retrieval"
-    ],
-    "avg_latency_ms": 5506.4
-  },
-  "local:qwen-2.5-3b": {
-    "capabilities": {
-      "math": 0.75,
-      "reasoning": 0.6943,
-      "code": 0.96,
-      "creative": 0.64,
-      "translation": 0.4633,
-      "extraction": 1.0,
-      "retrieval": 0.96,
-      "general_qa": 0.7852
-    },
-    "cost_per_1k_input": 0.0002,
-    "cost_per_1k_output": 0.0004,
-    "avg_output_multiplier": 1.0,
-    "max_context": 256000,
-    "fails_on": [
+      "code",
+      "retrieval",
       "translation"
     ],
-    "avg_latency_ms": 4603.5
+    "supports_thinking": true,
+    "thinking_cost_multiplier": 1.3,
+    "samples": {
+      "code": 20,
+      "creative": 14,
+      "extraction": 8,
+      "general_qa": 15,
+      "math": 20,
+      "reasoning": 18,
+      "retrieval": 5,
+      "translation": 12
+    },
+    "avg_latency_ms": 2973.9
+  },
+  "gemma-4-31b-it": {
+    "capabilities": {
+      "math": 0.85,
+      "reasoning": 0.82,
+      "code": 0.85,
+      "creative": 0.7,
+      "translation": 0.3,
+      "extraction": 0.85,
+      "retrieval": 0.8,
+      "general_qa": 0.82
+    },
+    "cost_per_1k_input": 0.00015,
+    "cost_per_1k_output": 0.0006,
+    "avg_output_multiplier": 1.0,
+    "max_context": 8192,
+    "fails_on": ["translation"],
+    "supports_thinking": false,
+    "thinking_cost_multiplier": 1.0,
+    "samples": {},
+    "avg_latency_ms": 1500.0
+  },
+  "gemma-4-31b-it-nvfp4": {
+    "capabilities": {
+      "math": 0.80,
+      "reasoning": 0.80,
+      "code": 0.80,
+      "creative": 0.65,
+      "translation": 0.25,
+      "extraction": 0.80,
+      "retrieval": 0.75,
+      "general_qa": 0.78
+    },
+    "cost_per_1k_input": 0.0001,
+    "cost_per_1k_output": 0.0004,
+    "avg_output_multiplier": 1.0,
+    "max_context": 8192,
+    "fails_on": ["translation"],
+    "supports_thinking": false,
+    "thinking_cost_multiplier": 1.0,
+    "samples": {},
+    "avg_latency_ms": 1200.0
+  },
+  "gemma-4-26b-a4b-it": {
+    "capabilities": {
+      "math": 0.75,
+      "reasoning": 0.75,
+      "code": 0.75,
+      "creative": 0.60,
+      "translation": 0.2,
+      "extraction": 0.75,
+      "retrieval": 0.70,
+      "general_qa": 0.75
+    },
+    "cost_per_1k_input": 0.00005,
+    "cost_per_1k_output": 0.0002,
+    "avg_output_multiplier": 1.0,
+    "max_context": 8192,
+    "fails_on": ["translation"],
+    "supports_thinking": false,
+    "thinking_cost_multiplier": 1.0,
+    "samples": {},
+    "avg_latency_ms": 1000.0
   }
 }

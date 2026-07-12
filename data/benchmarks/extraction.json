@@ -28,5 +28,23 @@
     "expected_output": "Apple Vision Pro June 5 2023",
     "category": "extraction",
     "difficulty": "medium"
+  },
+  {
+    "prompt": "Extract the year from this sentence: 'The first moon landing was in 1969.'",
+    "expected_output": "1969",
+    "category": "extraction",
+    "difficulty": "easy"
+  },
+  {
+    "prompt": "Extract the color mentioned: 'The bright red car sped down the street.'",
+    "expected_output": "red",
+    "category": "extraction",
+    "difficulty": "easy"
+  },
+  {
+    "prompt": "Parse this complex JSON string and extract all values associated with the key 'metadata.author.id', ignoring any nested objects without an ID: '{\"post\": {\"metadata\": {\"author\": {\"id\": 991, \"name\": \"John\"}}, \"comments\": [{\"metadata\": {\"author\": {\"id\": 102}}}]}}'",
+    "expected_output": "991 102",
+    "category": "extraction",
+    "difficulty": "hard"
   }
 ]
